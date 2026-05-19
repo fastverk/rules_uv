@@ -1,0 +1,65 @@
+module(
+    name = "rules_uv",
+    version = "0.1.0",
+)
+
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+bazel_dep(name = "rules_rust", version = "0.70.0")
+bazel_dep(name = "rules_python", version = "1.7.0")
+
+# Dev-only: only required by examples/smoke's py_test toolchain.
+# Real consumers register their own Python toolchain in their
+# MODULE.bazel — rules_uv does not impose a Python version.
+python = use_extension(
+    "@rules_python//python/extensions:python.bzl",
+    "python",
+    dev_dependency = True,
+)
+python.toolchain(python_version = "3.12", is_default = True)
+
+# Register a Rust toolchain so cargo_bootstrap_repository has a
+# `cargo` and `rustc` to invoke. uv requires edition 2024 + a
+# >=1.93 toolchain; we pin 1.95.0 to match the other fastverk rules.
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(
+    edition = "2021",
+    versions = ["1.95.0"],
+)
+use_repo(rust, "rust_toolchains")
+
+register_toolchains("@rust_toolchains//:all")
+
+# Fetches uv's source tarball as @uv_source and bootstraps the uv
+# binary as @uv (via rules_rust's cargo_bootstrap_repository, which
+# shells out to a real `cargo build --release -p uv`).
+#
+# Consumers register the uv binary toolchain to expose `@uv//:uv` as
+# a resolvable tool:
+#
+#     register_toolchains("@rules_uv//uv:uv_toolchain_def")
+#
+# Pin a specific uv version with the `toolchain` tag:
+#
+#     uv = use_extension("@rules_uv//uv:extensions.bzl", "uv")
+#     uv.toolchain(version = "0.11.15")
+#     use_repo(uv, "uv")
+uv = use_extension("//uv:extensions.bzl", "uv")
+use_repo(uv, "uv", "uv_source")
+
+register_toolchains("//uv:uv_toolchain_def")
+
+# Dev-only.
+bazel_dep(name = "rules_shell", version = "0.6.1", dev_dependency = True)
+bazel_dep(name = "stardoc", version = "0.7.2", dev_dependency = True)
+
+# Dev-only: materialize @pip from examples/smoke/uv.lock so the
+# in-repo smoke `py_test` resolves real PyPI packages end-to-end.
+# Consumers' own MODULE.bazel files call `pip.parse(...)` themselves;
+# we don't ship this hub to them.
+pip = use_extension("//pip:extensions.bzl", "pip", dev_dependency = True)
+pip.parse(
+    hub_name = "pip",
+    lock = "//examples/smoke:uv.lock",
+)
+use_repo(pip, "pip")

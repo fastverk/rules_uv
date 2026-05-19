@@ -1,0 +1,25 @@
+# BUILD file overlaid on top of the @uv_source repo (astral-sh/uv
+# source tree) so cargo_bootstrap_repository has Bazel labels for
+# the lockfile, manifest, and source-tree filegroup.
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "Cargo.toml",
+    "Cargo.lock",
+])
+
+filegroup(
+    name = "srcs",
+    srcs = glob(
+        ["**"],
+        exclude = [
+            "target/**",
+            ".git/**",
+            "BUILD.bazel",
+            "WORKSPACE",
+            "WORKSPACE.bazel",
+            "MODULE.bazel",
+        ],
+    ),
+)

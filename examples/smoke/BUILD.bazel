@@ -1,0 +1,19 @@
+load("@pip//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_test")
+load("@rules_uv//uv:defs.bzl", "uv_run")
+
+py_test(
+    name = "smoke_test",
+    srcs = ["smoke_test.py"],
+    deps = [
+        requirement("certifi"),
+        requirement("idna"),
+    ],
+)
+
+# Smoke target for `uv_run` — `bazel run //examples/smoke:uv_version`
+# prints the uv version (via the sandbox-escaping wrapper).
+uv_run(
+    name = "uv_version",
+    subcommand = "--version",
+)

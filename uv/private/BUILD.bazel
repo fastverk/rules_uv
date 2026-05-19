@@ -1,0 +1,16 @@
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+
+package(default_visibility = ["//uv:__subpackages__"])
+
+bzl_library(
+    name = "known_versions",
+    srcs = ["known_versions.bzl"],
+)
+
+exports_files(
+    [
+        "uv_source.BUILD.bazel",
+        "uv_run.sh",
+    ],
+    visibility = ["//visibility:public"],
+)

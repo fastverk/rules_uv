@@ -1,0 +1,46 @@
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+load(":toolchains.bzl", "uv_toolchain")
+
+package(default_visibility = ["//visibility:public"])
+
+# Single toolchain type covers "the uv binary as a resolvable tool".
+# Future per-language wrappers (`uv pip sync`, `uv run`, …) keep
+# using this same type since they all need the same executable.
+toolchain_type(name = "toolchain_type")
+
+# Bind the bootstrapped binary (@uv//:binary, produced by
+# cargo_bootstrap_repository) into the toolchain shape consumers
+# resolve against.
+# cargo_bootstrap_repository emits two targets in @uv: `:binary` (an
+# alias to the source `release/uv` file) and `:install` (a
+# rust_binary wrapper around it). The wrapper carries the
+# `executable = True` shape uv_toolchain's attr.label needs, so we
+# resolve through `:install`.
+uv_toolchain(
+    name = "uv_toolchain",
+    uv = "@uv//:install",
+)
+
+toolchain(
+    name = "uv_toolchain_def",
+    toolchain = ":uv_toolchain",
+    toolchain_type = ":toolchain_type",
+)
+
+# Stardoc / bzl_library plumbing for the public API surface.
+bzl_library(
+    name = "defs",
+    srcs = ["defs.bzl"],
+    deps = [":toolchains"],
+)
+
+bzl_library(
+    name = "extensions",
+    srcs = ["extensions.bzl"],
+    deps = ["//uv/private:known_versions"],
+)
+
+bzl_library(
+    name = "toolchains",
+    srcs = ["toolchains.bzl"],
+)

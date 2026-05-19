@@ -1,0 +1,16 @@
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+
+package(default_visibility = ["//pip:__subpackages__"])
+
+exports_files(
+    [
+        "uvlock_to_json.py",
+        "pip_package.BUILD.tpl",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+bzl_library(
+    name = "wheel_selection",
+    srcs = ["wheel_selection.bzl"],
+)
