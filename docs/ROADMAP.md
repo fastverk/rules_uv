@@ -1,6 +1,6 @@
 # rules_uv roadmap
 
-## v0.1 (this release)
+## v0.1
 
 - [x] `@uv//:binary` built from source via `cargo_bootstrap_repository`.
 - [x] `uv_run` macro: sandbox-escaping `bazel run` wrapper.
@@ -10,10 +10,20 @@
 - [x] Sdist fallback (raw download; no build step yet).
 - [x] End-to-end smoke test in `examples/smoke`.
 
-## v0.2 (next)
+## v0.2 (this release)
 
-Two themes — completeness, and giving consumers a fast path that
-skips the 12-minute cold build.
+- [x] **Prebuilt-uv toolchain alternative.** `uv.toolchain(source =
+      "prebuilt")` fetches the official release asset for the host
+      platform from `astral-sh/uv` releases. Supported hosts today:
+      `darwin_{aarch64,x86_64}` and `linux_{aarch64,x86_64}`.
+      musl + 32-bit + Windows triples are intentionally omitted
+      until someone needs them — pinning shas we never test is
+      security theater.
+- [x] **Unified target shape.** Both `build` and `prebuilt` produce
+      `@uv//:binary` as a `File`; `uv_toolchain` accepts the file
+      directly (no more `:install` rust_binary indirection).
+
+## v0.3 (next)
 
 ### Native wheel selection
 
@@ -30,18 +40,6 @@ Today the per-package repo rule only picks the pure-Python wheel
 rules_python's `whl_target_platforms.bzl` already does this and is
 the reference implementation. The work for rules_uv is to port the
 table + scoring logic — no new design needed.
-
-### Prebuilt-uv toolchain alternative
-
-12 minutes for a cold build is the right move when the user wants
-hermeticity and reproducibility, but it's overkill for many setups.
-Add a second toolchain backed by `rules_github`-fetched releases
-from `astral-sh/uv` (the same pattern rules_bun + rules_mdbook use)
-so consumers can pick:
-
-- `uv.toolchain(source = "build")` (default) — current behavior.
-- `uv.toolchain(source = "prebuilt")` — fetch the official release
-  binary for the host triple.
 
 ### Sdist installation
 
@@ -62,9 +60,9 @@ import tree for every package, not just pure-Python ones.
   Should map onto Bazel `select()` — same pattern rules_python uses.
 - Git + path + editable sources: skipped entirely. Path is the
   easiest (just a `local_repository`); git is `git_repository`;
-  editable is a v0.3 conversation.
+  editable is a v0.4 conversation.
 
-## Beyond v0.2
+## Beyond v0.3
 
 - `uv_pip_compile`: `bazel run`-able workflow to regenerate
   `requirements.txt` from a `pyproject.toml` (analogous to rules_uv

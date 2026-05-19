@@ -14,26 +14,32 @@ high-speed Python package + project manager. Two pieces:
    aggregating hub repo with a `requirement("<name>")` macro, and
    transitive deps wired up by the lockfile.
 
-## Status: v0.1
+## Status: v0.2
 
 What ships:
 
-* `uv` is built from source. ~12-minute cold build; cached after.
+* `uv` binary, two interchangeable paths:
+  - `source = "build"` (default) — built from astral-sh/uv source
+    via rules_rust's `cargo_bootstrap_repository`. ~12-min cold
+    build; cached after. Highest hermeticity.
+  - `source = "prebuilt"` — fetches the official release asset
+    for the host platform (`darwin_aarch64`, `darwin_x86_64`,
+    `linux_aarch64`, `linux_x86_64`). Seconds to fetch.
 * `pip.parse` reads `uv.lock` and materializes pure-Python packages
   (the `py3-none-any` wheel slice) into Bazel. Sdists fall back to a
-  raw download; consumers can wire them through their own builders.
+  raw download.
 * End-to-end smoke test (`examples/smoke/`) — `py_test` that imports
   `idna` + `certifi` resolved through the extension.
 
-Deferred to v0.2 (see [`docs/ROADMAP.md`](docs/ROADMAP.md)):
+Deferred to v0.3 (see [`docs/ROADMAP.md`](docs/ROADMAP.md)):
 
 * Native-wheel selection (`manylinux_*`, `macosx_*_arm64`, …). Today
   we ship only the pure-Python slice; native wheels need real PEP
   425 / PEP 600 tag matching.
 * Optional-dependency groups + per-marker resolution.
 * Git + path + editable lockfile sources.
-* Prebuilt-uv toolchain alternative (skip the 12-minute cold build
-  when you're OK with Astral's GitHub-Release binaries).
+* Sdist installation via `uv pip install --target` (uses the
+  bootstrapped binary itself).
 
 ## Architecture
 
@@ -65,10 +71,12 @@ common --registry=https://bcr.bazel.build/
 `MODULE.bazel`:
 
 ```python
-bazel_dep(name = "rules_uv", version = "0.1.0")
+bazel_dep(name = "rules_uv", version = "0.2.0")
 bazel_dep(name = "rules_python", version = "1.7.0")
 
 uv = use_extension("@rules_uv//uv:extensions.bzl", "uv")
+# Optional — omit the tag for the default `source = "build"` path.
+uv.toolchain(source = "prebuilt")
 use_repo(uv, "uv", "uv_source")
 register_toolchains("@rules_uv//uv:uv_toolchain_def")
 

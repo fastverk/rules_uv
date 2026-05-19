@@ -11,14 +11,12 @@ toolchain_type(name = "toolchain_type")
 # Bind the bootstrapped binary (@uv//:binary, produced by
 # cargo_bootstrap_repository) into the toolchain shape consumers
 # resolve against.
-# cargo_bootstrap_repository emits two targets in @uv: `:binary` (an
-# alias to the source `release/uv` file) and `:install` (a
-# rust_binary wrapper around it). The wrapper carries the
-# `executable = True` shape uv_toolchain's attr.label needs, so we
-# resolve through `:install`.
+# Both extension modes (`build` + `prebuilt`) produce `@uv//:binary`
+# pointing at the uv executable. The toolchain attr accepts a File
+# label directly (see `uv_toolchain` rule docs in toolchains.bzl).
 uv_toolchain(
     name = "uv_toolchain",
-    uv = "@uv//:install",
+    uv = "@uv//:binary",
 )
 
 toolchain(
