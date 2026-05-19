@@ -1,0 +1,69 @@
+load("@bazel_skylib//rules:diff_test.bzl", "diff_test")
+load("@rules_jsonschema//util:write_source_files.bzl", "write_source_files")
+load("@stardoc//stardoc:stardoc.bzl", "stardoc")
+
+package(default_visibility = ["//visibility:public"])
+
+# Reference docs are stardoc-generated AND committed to source. The
+# diff_test gates assert the committed file matches what stardoc
+# produces from the .bzl docstrings; CI fails if someone changes a
+# rule without running `bazel run //docs:update`.
+#
+# Three stardoc invocations matching the public-API surface:
+#   - uv/defs.bzl        — the `uv_run` sandbox-escaping macro.
+#   - uv/toolchains.bzl  — `uv_toolchain` rule + `UvToolchainInfo`.
+#   - pip/extensions.bzl — the `pip` module extension (uv.lock → @pip).
+#
+# `uv/extensions.bzl` (the `uv` module extension) is intentionally
+# not stardoc'd: rules_rust's cargo_bootstrap_repository pulls in
+# a transitive Starlark load graph deep enough that wrapping each
+# private bzl in a local bzl_library spirals. The same content is
+# documented narratively in `README.md` and the bzl docstring.
+stardoc(
+    name = "uv_defs_doc",
+    out = "uv_defs.md.generated",
+    input = "//uv:defs.bzl",
+    deps = ["//uv:defs"],
+)
+
+stardoc(
+    name = "uv_toolchains_doc",
+    out = "uv_toolchains.md.generated",
+    input = "//uv:toolchains.bzl",
+    deps = ["//uv:toolchains"],
+)
+
+stardoc(
+    name = "pip_extensions_doc",
+    out = "pip_extensions.md.generated",
+    input = "//pip:extensions.bzl",
+    deps = ["//pip:extensions"],
+)
+
+diff_test(
+    name = "uv_defs_doc_up_to_date",
+    file1 = "uv_defs.md",
+    file2 = ":uv_defs_doc",
+)
+
+diff_test(
+    name = "uv_toolchains_doc_up_to_date",
+    file1 = "uv_toolchains.md",
+    file2 = ":uv_toolchains_doc",
+)
+
+diff_test(
+    name = "pip_extensions_doc_up_to_date",
+    file1 = "pip_extensions.md",
+    file2 = ":pip_extensions_doc",
+)
+
+# `bazel run //docs:update` writes every stardoc output back to source.
+write_source_files(
+    name = "update",
+    files = {
+        "uv_defs.md": ":uv_defs_doc",
+        "uv_toolchains.md": ":uv_toolchains_doc",
+        "pip_extensions.md": ":pip_extensions_doc",
+    },
+)

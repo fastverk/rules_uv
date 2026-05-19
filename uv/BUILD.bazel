@@ -29,13 +29,36 @@ toolchain(
 bzl_library(
     name = "defs",
     srcs = ["defs.bzl"],
-    deps = [":toolchains"],
+    deps = [
+        "@rules_shell//shell:rules_bzl",
+        ":toolchains",
+    ],
 )
 
 bzl_library(
     name = "extensions",
     srcs = ["extensions.bzl"],
-    deps = ["//uv/private:known_versions"],
+    deps = [
+        ":bazel_tools_repo_rules",
+        "@rules_rust//cargo:bzl_lib",
+        "//uv/private:known_versions",
+    ],
+)
+
+# stardoc bzl_library shim for the bazel_tools repo rules — they
+# ship as `exports_files`'d source .bzls without a bzl_library
+# target, so the stardoc deps graph needs us to wrap them locally.
+# git.bzl + http.bzl pull cache.bzl, utils.bzl, git_worker.bzl
+# transitively; list every file the chain touches.
+bzl_library(
+    name = "bazel_tools_repo_rules",
+    srcs = [
+        "@bazel_tools//tools/build_defs/repo:cache.bzl",
+        "@bazel_tools//tools/build_defs/repo:git.bzl",
+        "@bazel_tools//tools/build_defs/repo:git_worker.bzl",
+        "@bazel_tools//tools/build_defs/repo:http.bzl",
+        "@bazel_tools//tools/build_defs/repo:utils.bzl",
+    ],
 )
 
 bzl_library(

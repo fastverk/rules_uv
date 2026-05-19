@@ -6,6 +6,7 @@ bzl_library(
     name = "extensions",
     srcs = ["extensions.bzl"],
     deps = [
+        "//uv:bazel_tools_repo_rules",
         "//pip/private:markers",
         "//pip/private:platform",
         "//pip/private:sdist_install",
