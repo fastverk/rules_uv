@@ -8,6 +8,8 @@ py_test(
     deps = [
         requirement("certifi"),
         requirement("idna"),
+        requirement("iniconfig"),
+        requirement("markupsafe"),
     ],
 )
 

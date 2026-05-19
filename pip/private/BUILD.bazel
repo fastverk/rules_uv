@@ -11,6 +11,17 @@ exports_files(
 )
 
 bzl_library(
+    name = "platform",
+    srcs = ["platform.bzl"],
+)
+
+bzl_library(
     name = "wheel_selection",
     srcs = ["wheel_selection.bzl"],
+    deps = [":platform"],
+)
+
+bzl_library(
+    name = "sdist_install",
+    srcs = ["sdist_install.bzl"],
 )

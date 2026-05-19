@@ -5,5 +5,9 @@ package(default_visibility = ["//visibility:public"])
 bzl_library(
     name = "extensions",
     srcs = ["extensions.bzl"],
-    deps = ["//pip/private:wheel_selection"],
+    deps = [
+        "//pip/private:platform",
+        "//pip/private:sdist_install",
+        "//pip/private:wheel_selection",
+    ],
 )

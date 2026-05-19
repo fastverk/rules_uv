@@ -17,6 +17,22 @@ class SmokeTest(unittest.TestCase):
         path = certifi.where()
         self.assertTrue(path.endswith(".pem"))
 
+    def test_markupsafe_native_wheel_resolves(self):
+        # markupsafe is a C-extension package. Exercising it confirms
+        # wheel_selection.bzl picked the right native wheel for the
+        # host (cp312-cp312-<host-platform>) and Bazel unpacked it
+        # into an importable tree.
+        from markupsafe import escape, Markup
+        self.assertEqual(escape("<x>"), Markup("&lt;x&gt;"))
+
+    def test_iniconfig_sdist_install_resolves(self):
+        # iniconfig is wired into uv.lock without a `wheels = [...]`
+        # entry, so wheel_selection falls through to sdist install
+        # (uv pip install --target=.). This confirms the sdist path
+        # produces an importable tree end-to-end.
+        import iniconfig
+        self.assertTrue(hasattr(iniconfig, "IniConfig"))
+
 
 if __name__ == "__main__":
     unittest.main()

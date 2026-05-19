@@ -14,7 +14,7 @@ high-speed Python package + project manager. Two pieces:
    aggregating hub repo with a `requirement("<name>")` macro, and
    transitive deps wired up by the lockfile.
 
-## Status: v0.2
+## Status: v0.3
 
 What ships:
 
@@ -25,21 +25,27 @@ What ships:
   - `source = "prebuilt"` — fetches the official release asset
     for the host platform (`darwin_aarch64`, `darwin_x86_64`,
     `linux_aarch64`, `linux_x86_64`). Seconds to fetch.
-* `pip.parse` reads `uv.lock` and materializes pure-Python packages
-  (the `py3-none-any` wheel slice) into Bazel. Sdists fall back to a
-  raw download.
+* `pip.parse` reads `uv.lock` and materializes:
+  - **Pure-Python wheels** (`py3-none-any`) — http_archive unpacks
+    the wheel as a zip.
+  - **Native wheels** (`manylinux_*`, `macosx_*_arm64`, …) —
+    PEP 425 / PEP 600 tag scoring against the host triple +
+    `python_version`. Best-matching wheel wins.
+  - **Sdists** — shells to `@uv//:uv` (`uv pip install --target=. --no-deps`)
+    at repo-rule time. Builds C extensions if the sdist has any.
+    Choose between `python = "host"` (uses `python3` on PATH) and
+    `python = "uv"` (uses `uv python install <version>`).
 * End-to-end smoke test (`examples/smoke/`) — `py_test` that imports
-  `idna` + `certifi` resolved through the extension.
+  certifi (pure-python wheel), idna (pure-python wheel), markupsafe
+  (native wheel, cp312 host-arch), and iniconfig (sdist install).
 
-Deferred to v0.3 (see [`docs/ROADMAP.md`](docs/ROADMAP.md)):
+Deferred to v0.4 (see [`docs/ROADMAP.md`](docs/ROADMAP.md)):
 
-* Native-wheel selection (`manylinux_*`, `macosx_*_arm64`, …). Today
-  we ship only the pure-Python slice; native wheels need real PEP
-  425 / PEP 600 tag matching.
 * Optional-dependency groups + per-marker resolution.
 * Git + path + editable lockfile sources.
-* Sdist installation via `uv pip install --target` (uses the
-  bootstrapped binary itself).
+* Cross-platform wheels via `select()` for multi-target builds.
+* Migration to rules_python's `uv_toolchain` once it leaves
+  experimental.
 
 ## Architecture
 
@@ -71,7 +77,7 @@ common --registry=https://bcr.bazel.build/
 `MODULE.bazel`:
 
 ```python
-bazel_dep(name = "rules_uv", version = "0.2.0")
+bazel_dep(name = "rules_uv", version = "0.3.0")
 bazel_dep(name = "rules_python", version = "1.7.0")
 
 uv = use_extension("@rules_uv//uv:extensions.bzl", "uv")
@@ -84,6 +90,8 @@ pip = use_extension("@rules_uv//pip:extensions.bzl", "pip")
 pip.parse(
     hub_name = "pip",
     lock = "//:uv.lock",
+    python_version = "3.12",   # used for wheel tag matching
+    python = "host",           # "host" (python3 on PATH) | "uv"
 )
 use_repo(pip, "pip")
 ```

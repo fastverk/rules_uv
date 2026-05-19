@@ -3,9 +3,9 @@
 Counterpart to rules_python's `pip_parse`, but driven by uv.lock
 instead of requirements.txt. For each package the lockfile resolves
 to, we create a Bazel-fetched repo containing the unpacked wheel
-(or sdist, as a v0.1 fallback). A hub repo aggregates these and
-exposes a `requirement("<name>")` macro plus pre-aliased
-`@<hub>//<name>:pkg` labels.
+(or installed sdist). A hub repo aggregates these and exposes a
+`requirement("<name>")` macro plus pre-aliased `@<hub>//<name>:pkg`
+labels.
 
 Consumer:
 
@@ -13,6 +13,7 @@ Consumer:
     pip.parse(
         hub_name = "pip",
         lock = "//:uv.lock",
+        python_version = "3.12",
     )
     use_repo(pip, "pip")
 
@@ -26,43 +27,41 @@ Then in BUILD files:
         deps = [requirement("requests")],
     )
 
-Limitations (deferred to v0.2):
+Limitations:
 
-  * Native-wheel selection: only pure-python wheels + sdist fallback
-    are wired today (see `wheel_selection.bzl`).
   * Optional-dependency groups + extras: dropped on the floor by the
-    JSON projection (see `uvlock_to_json.py`).
-  * Editable + git + path sources: tolerated in the lockfile (we
-    record them as `source = "..."` strings) but produce no
-    materialized repo. They are intended for v0.2 (`uv pip install
-    --target` for sdists; thin BUILD wrappers for path entries).
+    JSON projection (see `uvlock_to_json.py`). Tracked for v0.4.
+  * Editable + git + path sources: tolerated in the lockfile but
+    produce no materialized repo (see source filter below).
 """
 
-load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive", "http_file")
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+load("//pip/private:platform.bzl", "host_platform")
+load("//pip/private:sdist_install.bzl", "sdist_install_repo")
 load("//pip/private:wheel_selection.bzl", "select_artifact")
 
 # -----------------------------------------------------------------------------
-# Per-package repo rule. Materializes the wheel (or sdist) under
-# @<hub>__<normalized_pkg>.
+# Per-package repo creation. Dispatches on artifact kind:
+#   wheel → http_archive (Bazel unpacks the .whl as a zip)
+#   sdist → sdist_install_repo (uv pip install --target=.)
 # -----------------------------------------------------------------------------
 
-def _make_pkg_repo(hub_name, pkg, build_tpl):
-    artifact = select_artifact(pkg)
+def _make_pkg_repo(hub_name, pkg, build_tpl, host, python_version,
+                   python_strategy, uv_label):
+    artifact = select_artifact(pkg, host, python_version)
     repo_name = _pkg_repo_name(hub_name, pkg["name"])
 
     deps_labels = [
         "@{}__{}//:pkg".format(hub_name, _normalize(d))
         for d in pkg.get("dependencies", [])
     ]
-    deps_str = ", ".join(['"{}"'.format(d) for d in deps_labels])
-    build_file_content = build_tpl \
-        .replace("{NAME}", pkg["name"]) \
-        .replace("{VERSION}", pkg.get("version", "")) \
-        .replace("{DEPS}", deps_str)
 
     if artifact.kind == "wheel":
-        # http_archive unpacks .whl files transparently (Bazel treats
-        # them as zip). The resulting tree is the importable package.
+        deps_str = ", ".join(['"{}"'.format(d) for d in deps_labels])
+        build_file_content = build_tpl \
+            .replace("{NAME}", pkg["name"]) \
+            .replace("{VERSION}", pkg.get("version", "")) \
+            .replace("{DEPS}", deps_str)
         http_archive(
             name = repo_name,
             url = artifact.url,
@@ -71,15 +70,16 @@ def _make_pkg_repo(hub_name, pkg, build_tpl):
             build_file_content = build_file_content,
         )
     else:
-        # sdist path: keep the tarball as a data file. v0.1 doesn't
-        # actually install it; the py_library above globs anything
-        # that happens to live alongside. Real sdist support is a
-        # v0.2 deliverable.
-        http_file(
+        sdist_install_repo(
             name = repo_name,
             url = artifact.url,
             sha256 = artifact.sha256,
-            downloaded_file_path = artifact.filename,
+            pkg_name = pkg["name"],
+            pkg_version = pkg.get("version", ""),
+            deps = deps_labels,
+            uv = uv_label,
+            python_strategy = python_strategy,
+            python_version = python_version,
         )
 
 # -----------------------------------------------------------------------------
@@ -127,7 +127,7 @@ def requirement(name):
     \"\"\"Resolve a package name to its Bazel label.\"\"\"
     norm = name.lower().replace("_", "-").replace(".", "-")
     if norm not in _REQUIREMENTS:
-        fail("rules_uv/pip: unknown package {{!r}} (known: {{}})".format(
+        fail("rules_uv/pip: unknown package '{{}}' (known: {{}})".format(
             name, sorted(_REQUIREMENTS.keys()),
         ))
     return _REQUIREMENTS[norm]
@@ -164,6 +164,7 @@ def _pip_extension_impl(mctx):
         Label("//pip/private:pip_package.BUILD.tpl"),
     )
     build_tpl = mctx.read(build_tpl_path)
+    host = host_platform(mctx)
 
     for mod in mctx.modules:
         for tag in mod.tags.parse:
@@ -171,12 +172,21 @@ def _pip_extension_impl(mctx):
             pkg_names = []
             for pkg in lock["packages"]:
                 if pkg["source"] not in ("registry", "url"):
-                    # Skip git/path/editable/virtual — see module
-                    # docstring. The hub still records the name so
-                    # consumer code that references it gets a clearer
-                    # error than "undefined label".
+                    # Skip git/path/editable/virtual sources — the
+                    # hub omits them entirely so consumer code that
+                    # references one fails with the hub's "unknown
+                    # package" error instead of an undefined-label
+                    # mystery.
                     continue
-                _make_pkg_repo(tag.hub_name, pkg, build_tpl)
+                _make_pkg_repo(
+                    hub_name = tag.hub_name,
+                    pkg = pkg,
+                    build_tpl = build_tpl,
+                    host = host,
+                    python_version = tag.python_version,
+                    python_strategy = tag.python,
+                    uv_label = tag.uv,
+                )
                 pkg_names.append(pkg["name"])
             _hub_repo(
                 name = tag.hub_name,
@@ -193,6 +203,30 @@ _parse_tag = tag_class(attrs = {
         mandatory = True,
         allow_single_file = True,
         doc = "Label pointing at a uv.lock file.",
+    ),
+    "python_version": attr.string(
+        default = "3.12",
+        doc = "Python `major.minor` used for wheel-tag matching " +
+              "and (when python = \"uv\") the uv-managed interpreter.",
+    ),
+    "python": attr.string(
+        default = "host",
+        values = ["host", "uv"],
+        doc = "How to find a Python interpreter for sdist install. " +
+              "`host` uses `python3` on PATH; `uv` runs " +
+              "`uv python install <python_version>` per package.",
+    ),
+    "uv": attr.label(
+        # Both extension modes expose `@uv//:uv` as the canonical
+        # uv-binary File label (build mode symlinks it to
+        # release/uv; prebuilt mode places it at the repo root via
+        # http_archive's strip_prefix). `:binary` is an alias and
+        # rctx.path() doesn't follow aliases — so we point sdist_install
+        # at the underlying file directly.
+        default = "@uv//:uv",
+        doc = "Label of the uv binary used to install sdists. " +
+              "Defaults to the one materialized by " +
+              "`@rules_uv//uv:extensions.bzl%uv`.",
     ),
 })
 
