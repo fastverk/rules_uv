@@ -1,6 +1,6 @@
 module(
     name = "rules_uv",
-    version = "0.4.0",
+    version = "0.5.0",
 )
 
 bazel_dep(name = "platforms", version = "1.0.0")
@@ -62,4 +62,14 @@ pip.parse(
     hub_name = "pip",
     lock = "//examples/smoke:uv.lock",
 )
-use_repo(pip, "pip")
+pip.parse(
+    hub_name = "multipip",
+    lock = "//examples/multiplatform:uv.lock",
+    platforms = [
+        "darwin_aarch64",
+        "darwin_x86_64",
+        "linux_aarch64",
+        "linux_x86_64",
+    ],
+)
+use_repo(pip, "pip", "multipip")

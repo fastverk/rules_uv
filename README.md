@@ -14,7 +14,7 @@ high-speed Python package + project manager. Two pieces:
    aggregating hub repo with a `requirement("<name>")` macro, and
    transitive deps wired up by the lockfile.
 
-## Status: v0.4
+## Status: v0.5
 
 What ships:
 
@@ -49,16 +49,26 @@ What ships:
   508 subset: `python_version`, `python_full_version`, `os_name`,
   `sys_platform`, `platform_system`, `platform_machine`, `extra`;
   comparisons + `and`/`or`/`not`/`in`/`not in`/grouping.
-* End-to-end smoke test (`examples/smoke/`) — `py_test` that imports
-  idna (pure wheel), markupsafe (native wheel), iniconfig (sdist
-  install), and uses `certifi[bundle]` (per-extra target). The lockfile
-  also includes a marker-gated edge that's correctly dropped.
+* **Cross-platform wheels** (`pip.parse(platforms = [...])`) — when
+  the consumer opts into multi-platform mode, packages with
+  platform-divergent native wheels fan out into per-platform repos
+  behind a selector that `alias`-`select()`s on `@platforms//os` +
+  `@platforms//cpu`. Pure-python wheels stay single-repo
+  (platform-agnostic). Sdist + git + path packages remain host-only
+  and fail loudly if a cross-platform build tries to resolve them.
+* End-to-end smoke tests:
+  - `examples/smoke/` — host-only build with all five lockfile-feature
+    paths: pure wheel, native wheel, sdist install, `certifi[bundle]`
+    extra, marker-gated dep filtered out.
+  - `examples/multiplatform/` — multi-platform lockfile + py_test
+    that resolves a native wheel through the per-platform selector.
 
-Deferred to v0.5 (see [`docs/ROADMAP.md`](docs/ROADMAP.md)):
+Deferred to v0.6 (see [`docs/ROADMAP.md`](docs/ROADMAP.md)):
 
-* Cross-platform wheels via `select()` for multi-target builds.
 * Migration to rules_python's `uv_toolchain` once it leaves
   experimental.
+* Sdist install in multi-platform mode (currently host-only).
+* musl + Windows platform tag tables in `pip/private/platform.bzl`.
 
 ## Architecture
 
@@ -90,7 +100,7 @@ common --registry=https://bcr.bazel.build/
 `MODULE.bazel`:
 
 ```python
-bazel_dep(name = "rules_uv", version = "0.4.0")
+bazel_dep(name = "rules_uv", version = "0.5.0")
 bazel_dep(name = "rules_python", version = "1.7.0")
 
 uv = use_extension("@rules_uv//uv:extensions.bzl", "uv")

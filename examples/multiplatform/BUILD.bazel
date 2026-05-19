@@ -1,0 +1,11 @@
+load("@multipip//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_test")
+
+py_test(
+    name = "multiplatform_test",
+    srcs = ["multiplatform_test.py"],
+    deps = [
+        requirement("idna"),         # pure wheel: single repo, no select
+        requirement("markupsafe"),   # native wheel: per-platform select
+    ],
+)

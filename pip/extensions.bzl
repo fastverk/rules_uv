@@ -46,7 +46,12 @@ load(
 load("//pip/private:markers.bzl", "eval_marker", "host_env")
 load("//pip/private:platform.bzl", "host_platform")
 load("//pip/private:sdist_install.bzl", "sdist_install_repo")
-load("//pip/private:wheel_selection.bzl", "select_artifact")
+load(
+    "//pip/private:wheel_selection.bzl",
+    "SUPPORTED_PLATFORMS",
+    "select_artifact",
+    "select_artifacts_per_platform",
+)
 
 # -----------------------------------------------------------------------------
 # Per-package repo creation. Dispatches on source kind first
@@ -116,7 +121,22 @@ def _extras_dep_sets(pkg, env):
     return sorted_out
 
 def _make_pkg_repo(hub_name, pkg, build_tpl, host, python_version,
-                   python_strategy, uv_label):
+                   python_strategy, uv_label, target_platforms):
+    """Materialize repos for one package.
+
+    `target_platforms` is the list of canonical `<os>_<arch>`
+    platforms the consumer wants this lockfile to support. When
+    the list is `[host]` (the v0.4 default), behavior matches the
+    single-repo path. When the list has multiple entries, packages
+    with platform-divergent wheels fan out into per-platform repos
+    behind a selector that `select()`s on Bazel's @platforms
+    constraint values.
+
+    Sdist and git/path sources stay single-repo (host-only at
+    fetch time). A multi-platform build that depends on an sdist
+    package will only work for the host platform; this is a known
+    v0.5 limitation tracked in the roadmap.
+    """
     source = pkg.get("source", {})
     kind = source.get("kind", "unknown")
     repo_name = _pkg_repo_name(hub_name, pkg["name"])
@@ -139,11 +159,6 @@ def _make_pkg_repo(hub_name, pkg, build_tpl, host, python_version,
         .replace("{EXTRA_TARGETS}", extra_targets_str)
 
     if kind == "git":
-        # uv normalizes the rev in `source.rev`. Git sources have no
-        # wheel — Bazel fetches the repo and we trust the project's
-        # own setup.py / pyproject.toml to be importable as a tree.
-        # Consumers that need a build step can layer `genrule` or
-        # `py_wheel` on top via a patch.
         new_git_repository(
             name = repo_name,
             remote = source.get("git", ""),
@@ -153,12 +168,6 @@ def _make_pkg_repo(hub_name, pkg, build_tpl, host, python_version,
         return
 
     if kind == "path":
-        # Path sources point at a sibling directory inside the
-        # consumer's workspace. We use `new_local_repository` so
-        # Bazel sees it as a real repo (and re-fetches on changes).
-        # The relative path is resolved against the workspace
-        # root, not the lockfile's directory — same semantics as
-        # uv itself.
         _path_repo(
             name = repo_name,
             path = source.get("path", ""),
@@ -167,10 +176,6 @@ def _make_pkg_repo(hub_name, pkg, build_tpl, host, python_version,
         return
 
     if kind == "editable":
-        # Editable sources only make sense inside `uv run`. For
-        # Bazel they're effectively path sources with a develop-
-        # install gloss. Emit a clear error rather than silently
-        # producing a broken target.
         fail(
             "rules_uv/pip: package {} uses an editable source. " +
             "Editable installs are not supported in Bazel — convert " +
@@ -179,9 +184,75 @@ def _make_pkg_repo(hub_name, pkg, build_tpl, host, python_version,
             ),
         )
 
-    # Default = registry/url. Select wheel vs sdist via
-    # wheel_selection, then fan out.
-    artifact = select_artifact(pkg, host, python_version)
+    # Default = registry/url. Decide between host-only single-repo
+    # and the multi-platform select() path.
+    if len(target_platforms) <= 1:
+        # Host-only path (v0.4 behavior preserved).
+        artifact = select_artifact(pkg, host, python_version)
+        _materialize_single(
+            repo_name = repo_name,
+            artifact = artifact,
+            build_file_content = build_file_content,
+            pkg = pkg,
+            dep_labels = dep_labels,
+            uv_label = uv_label,
+            python_strategy = python_strategy,
+            python_version = python_version,
+        )
+        return
+
+    artifacts = select_artifacts_per_platform(pkg, python_version, target_platforms)
+    if artifacts.uniform and artifacts.any_platform.kind == "wheel":
+        # Pure-python wheel — every platform picked the same URL.
+        # Stay single-repo.
+        _materialize_single(
+            repo_name = repo_name,
+            artifact = artifacts.any_platform,
+            build_file_content = build_file_content,
+            pkg = pkg,
+            dep_labels = dep_labels,
+            uv_label = uv_label,
+            python_strategy = python_strategy,
+            python_version = python_version,
+        )
+        return
+
+    # Platform-divergent: native wheels per platform (and/or sdists).
+    # Sdists are host-only; if any platform falls back to sdist in
+    # multi-platform mode, fail loudly — the consumer should be
+    # aware of the broken-for-cross-platform contract.
+    for plat, art in artifacts.per_platform.items():
+        if art.kind != "wheel":
+            fail(
+                "rules_uv/pip: package {!r} resolves to an sdist for " +
+                "platform {} but multi-platform mode is enabled. " +
+                "Sdist install is host-only; pick a lockfile entry " +
+                "with native wheels for every target platform, or drop " +
+                "{} from `platforms`.".format(
+                    pkg.get("name", "<unnamed>"),
+                    plat,
+                    plat,
+                ),
+            )
+        platform_repo_name = "{}__{}".format(repo_name, plat)
+        http_archive(
+            name = platform_repo_name,
+            url = art.url,
+            sha256 = art.sha256,
+            type = "zip",
+            build_file_content = build_file_content,
+        )
+
+    _selector_repo(
+        name = repo_name,
+        pkg_name = pkg["name"],
+        hub_name = hub_name,
+        platforms = list(artifacts.per_platform.keys()),
+    )
+
+def _materialize_single(repo_name, artifact, build_file_content, pkg,
+                        dep_labels, uv_label, python_strategy, python_version):
+    """Single-repo materialization for host-only or pure-wheel cases."""
     if artifact.kind == "wheel":
         http_archive(
             name = repo_name,
@@ -315,6 +386,78 @@ _path_repo = repository_rule(
 )
 
 # -----------------------------------------------------------------------------
+# Selector repo — emits a BUILD that `select()`s on platform constraints.
+# Used when a package has platform-divergent native wheels.
+# -----------------------------------------------------------------------------
+
+# `<os>_<arch>` → (`@platforms//os:`, `@platforms//cpu:`) pair. The
+# selector BUILD emits a config_setting for each combination and an
+# alias that routes to the matching per-platform repo.
+_PLATFORM_CONSTRAINTS = {
+    "darwin_aarch64": ("macos", "aarch64"),
+    "darwin_x86_64": ("macos", "x86_64"),
+    "linux_aarch64": ("linux", "aarch64"),
+    "linux_x86_64": ("linux", "x86_64"),
+}
+
+def _selector_repo_impl(rctx):
+    hub = rctx.attr.hub_name
+    pkg_name = rctx.attr.pkg_name
+    norm = pkg_name.lower().replace("_", "-").replace(".", "-")
+
+    config_settings = []
+    select_entries = []
+    for plat in rctx.attr.platforms:
+        os_constraint, cpu_constraint = _PLATFORM_CONSTRAINTS[plat]
+        config_settings.append("""\
+config_setting(
+    name = "{plat}",
+    constraint_values = [
+        "@platforms//os:{os}",
+        "@platforms//cpu:{cpu}",
+    ],
+)""".format(plat = plat, os = os_constraint, cpu = cpu_constraint))
+        # Reference the per-platform repo's `:pkg` target by its
+        # canonical name.
+        target = "@{hub}__{name}__{plat}//:pkg".format(
+            hub = hub,
+            name = norm,
+            plat = plat,
+        )
+        select_entries.append('        ":{}": "{}",'.format(plat, target))
+
+    rctx.file("BUILD.bazel", """\
+# Generated by rules_uv//pip:extensions.bzl — platform selector for
+# package {pkg}. Routes consumer references through Bazel's
+# @platforms constraint values to the right per-platform repo.
+
+package(default_visibility = ["//visibility:public"])
+
+{config_settings}
+
+alias(
+    name = "pkg",
+    actual = select({{
+{select_entries}
+    }}),
+)
+""".format(
+        pkg = pkg_name,
+        config_settings = "\n\n".join(config_settings),
+        select_entries = "\n".join(select_entries),
+    ))
+
+_selector_repo = repository_rule(
+    implementation = _selector_repo_impl,
+    attrs = {
+        "pkg_name": attr.string(mandatory = True),
+        "hub_name": attr.string(mandatory = True),
+        "platforms": attr.string_list(mandatory = True),
+    },
+    doc = "Emit a per-platform `select()` alias for a multi-wheel package.",
+)
+
+# -----------------------------------------------------------------------------
 # Top-level: read uv.lock via tomllib (python3.11 helper) and fan out.
 # -----------------------------------------------------------------------------
 
@@ -362,6 +505,7 @@ def _pip_extension_impl(mctx):
                     python_version = tag.python_version,
                     python_strategy = tag.python,
                     uv_label = tag.uv,
+                    target_platforms = _resolve_platforms(tag.platforms, host),
                 )
                 pkg_names.append(pkg["name"])
             _hub_repo(
@@ -398,6 +542,18 @@ _parse_tag = tag_class(attrs = {
         default = "@uv//:uv",
         doc = "Label of the uv binary used to install sdists.",
     ),
+    "platforms": attr.string_list(
+        default = [],
+        doc = "Optional list of `<os>_<arch>` platforms this " +
+              "lockfile should support. Default is host-only (the " +
+              "v0.4 behavior — `select()` is not introduced). " +
+              "Supported entries: " + ", ".join(SUPPORTED_PLATFORMS) +
+              ". Packages with platform-divergent native wheels " +
+              "fan out into per-platform repos behind a select() " +
+              "alias; sdist/git/path packages remain host-only and " +
+              "the build will fail loudly if a non-host platform " +
+              "tries to resolve them.",
+    ),
 })
 
 pip = module_extension(
@@ -416,6 +572,22 @@ def _normalize(name):
 
 def _pkg_repo_name(hub_name, pkg_name):
     return "{}__{}".format(hub_name, _normalize(pkg_name))
+
+def _resolve_platforms(tag_platforms, host):
+    """Pick the effective target-platform list.
+
+    Empty list = host-only (the v0.4 behavior). Otherwise, validate
+    every entry is in SUPPORTED_PLATFORMS and return as-is.
+    """
+    if not tag_platforms:
+        return [host]
+    for plat in tag_platforms:
+        if plat not in SUPPORTED_PLATFORMS:
+            fail(
+                "rules_uv/pip: unsupported platform {!r} in pip.parse(platforms=...). " +
+                "Supported: {}.".format(plat, SUPPORTED_PLATFORMS),
+            )
+    return tag_platforms
 
 def _dep_label(hub_name, pkg_name):
     return "@{}__{}//:pkg".format(hub_name, _normalize(pkg_name))

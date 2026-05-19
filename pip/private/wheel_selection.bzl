@@ -16,6 +16,15 @@ the wheel is skipped.
 
 load(":platform.bzl", "platform_tags", "python_tags")
 
+# Platforms supported by the v0.5 cross-platform path. Anything not
+# in this list falls through to host-only single-repo behavior.
+SUPPORTED_PLATFORMS = [
+    "darwin_aarch64",
+    "darwin_x86_64",
+    "linux_aarch64",
+    "linux_x86_64",
+]
+
 def _parse_wheel_filename(filename):
     """Returns struct(py_tags, abi_tags, platform_tags) or None.
 
@@ -121,4 +130,46 @@ def select_artifact(pkg, host_platform, python_version):
             host_platform,
             python_version,
         ),
+    )
+
+def select_artifacts_per_platform(pkg, python_version, platforms):
+    """Per-platform artifact selection for cross-platform builds.
+
+    For each platform in `platforms`, run the same selection as
+    `select_artifact`. The result tells the extension whether the
+    package is platform-uniform (every platform got the same pure
+    wheel) or needs the multi-repo + `select()` treatment.
+
+    Returns:
+      struct(
+        uniform = bool,                # True iff every platform picked
+                                       # the exact same artifact URL.
+        any_platform = struct(...),    # The shared artifact when
+                                       # uniform; None otherwise.
+        per_platform = {platform: artifact_struct, ...},
+      )
+
+    Behavior on packages with no compatible wheel: falls back to
+    sdist for every platform (sdist is platform-agnostic at source
+    level). The caller decides whether sdist install is even possible
+    across the requested platforms (currently host-only — see
+    extensions.bzl).
+    """
+    per_platform = {}
+    urls = {}
+    for plat in platforms:
+        artifact = select_artifact(pkg, plat, python_version)
+        per_platform[plat] = artifact
+        urls[artifact.url] = True
+
+    if len(urls) == 1:
+        return struct(
+            uniform = True,
+            any_platform = per_platform[platforms[0]],
+            per_platform = per_platform,
+        )
+    return struct(
+        uniform = False,
+        any_platform = None,
+        per_platform = per_platform,
     )

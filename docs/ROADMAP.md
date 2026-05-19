@@ -63,31 +63,56 @@
       `~/.config/uv/uv.toml` (which on many machines points at a
       private index) doesn't leak into sandbox builds.
 
-## v0.5 (next)
+## v0.5 (this release)
 
-### Cross-platform wheels
+- [x] **Cross-platform wheels.** `pip.parse(platforms = [...])`
+      opts the hub into multi-platform mode. Packages with
+      platform-divergent native wheels fan out into per-platform
+      repos (`@<hub>__<pkg>__<platform>`) behind a selector repo
+      that emits `alias(name = "pkg", actual = select(...))` over
+      `@platforms//os` + `@platforms//cpu` constraint values.
+      Non-host platform repos are declared but lazy-fetched —
+      they only land on disk when Bazel's configuration triggers
+      that branch of the `select()`.
+- [x] **Multi-platform smoke** (`examples/multiplatform/`):
+      pure-python wheel (idna) flows through the single-repo path;
+      native wheel (markupsafe) flows through the
+      per-platform select.
 
-When a lockfile carries wheels for multiple platforms (and the
-consumer wants to target several configurations from one tree),
-emit `select()` deps so the right wheel ships per platform. Today
-wheel selection happens once at repo-rule time against the host;
-this would push selection to analysis time.
+## v0.6 (next)
 
 ### Smoke fixtures for git + path sources
 
-v0.4 wires git/path source materialization, but the smoke test
-doesn't exercise either. Adding a fixture that lock-files a tiny
-pure-Python package from a pinned GitHub commit (and a sibling
-local path package) would catch regressions in those code paths.
+v0.4 wires git/path source materialization, but no smoke fixture
+exercises either. A fixture that lock-files a tiny pure-Python
+package from a pinned GitHub commit + a sibling local path package
+would catch regressions.
+
+### Sdist install in multi-platform mode
+
+Today sdist install is host-only — if a multi-platform lockfile
+references an sdist-only package, the extension fails fast rather
+than silently producing a broken cross-platform target. v0.6 could
+support per-platform sdist installs by running `uv pip install
+--target` once per requested platform (each producing its own
+per-platform repo). Requires either cross-compilation toolchains
+on the host (rare) or Bazel platform-transition magic.
+
+### musl + Windows platform tag tables
+
+`pip/private/platform.bzl` ships tag tables for the four fastverk
+hosts only. Adding musllinux + Windows entries (with
+`@platforms//os:windows` and a musl libc constraint) is mechanical
+once a consumer needs them.
 
 ### Marker evaluator: spot tests
 
 `pip/private/markers.bzl` is a hand-rolled PEP 508 subset parser.
-It would benefit from a skylib `unittest` suite covering the
-operators, precedence, and the comparison edge cases (especially
-`python_full_version` vs `python_version`).
+A skylib `unittest` suite covering operators, precedence, and the
+`python_full_version` vs `python_version` edge cases would lock
+the behavior down.
 
-## Beyond v0.5
+## Beyond v0.6
 
 - `uv_pip_compile`: `bazel run`-able workflow to regenerate
   `requirements.txt` from a `pyproject.toml` (analogous to rules_uv
