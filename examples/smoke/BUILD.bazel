@@ -6,10 +6,15 @@ py_test(
     name = "smoke_test",
     srcs = ["smoke_test.py"],
     deps = [
-        requirement("certifi"),
+        # Base targets.
         requirement("idna"),
         requirement("iniconfig"),
         requirement("markupsafe"),
+        # Per-extra target: certifi's synthetic `bundle` extra
+        # re-exports `:pkg` and adds a dep on idna. We pull this
+        # instead of plain `requirement("certifi")` to exercise
+        # the `pkg[extra]` resolution path.
+        requirement("certifi[bundle]"),
     ],
 )
 

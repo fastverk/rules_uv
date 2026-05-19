@@ -16,6 +16,11 @@ bzl_library(
 )
 
 bzl_library(
+    name = "markers",
+    srcs = ["markers.bzl"],
+)
+
+bzl_library(
     name = "wheel_selection",
     srcs = ["wheel_selection.bzl"],
     deps = [":platform"],

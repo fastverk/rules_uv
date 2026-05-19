@@ -6,6 +6,7 @@ bzl_library(
     name = "extensions",
     srcs = ["extensions.bzl"],
     deps = [
+        "//pip/private:markers",
         "//pip/private:platform",
         "//pip/private:sdist_install",
         "//pip/private:wheel_selection",

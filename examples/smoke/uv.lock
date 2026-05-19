@@ -17,9 +17,25 @@ dependencies = [
 name = "certifi"
 version = "2024.8.30"
 source = { registry = "https://pypi.org/simple" }
+# A marker-gated edge: typing-extensions is only required on python
+# < 3.11. With the smoke configured for python_version = "3.12",
+# the marker evaluator drops this edge entirely — `:pkg` ends up
+# with no real Bazel deps despite the entry being present.
+dependencies = [
+    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
+]
 sdist = { url = "https://files.pythonhosted.org/packages/b0/ee/9b19140fe824b367c04c5e1b369942dd754c4c5462d5674002f75c4dedc1/certifi-2024.8.30.tar.gz", hash = "sha256:bec941d2aa8195e248a60b31ff9f0558284cf01a52591ceda73ea9afffd69fd9" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/12/90/3c9ff0512038035f59d279fddeb79f5f1eccd8859f06d6163c58798b9487/certifi-2024.8.30-py3-none-any.whl", hash = "sha256:922820b53db7a7257ffbda3f597266d435245903d80737e34f8a45ff3e3230d8" },
+]
+
+# Synthetic extra: requesting `certifi[bundle]` produces a target
+# that re-exports `:pkg` plus a dep on idna. There's no real
+# `bundle` extra upstream — this exists to exercise rules_uv's
+# per-extra target generation end-to-end.
+[package.optional-dependencies]
+bundle = [
+    { name = "idna" },
 ]
 
 [[package]]

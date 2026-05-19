@@ -14,7 +14,7 @@ high-speed Python package + project manager. Two pieces:
    aggregating hub repo with a `requirement("<name>")` macro, and
    transitive deps wired up by the lockfile.
 
-## Status: v0.3
+## Status: v0.4
 
 What ships:
 
@@ -35,14 +35,27 @@ What ships:
     at repo-rule time. Builds C extensions if the sdist has any.
     Choose between `python = "host"` (uses `python3` on PATH) and
     `python = "uv"` (uses `uv python install <version>`).
+  - **Git sources** (`source = { git = "…", rev = "…" }`) — fetched
+    via `new_git_repository` with the BUILD wrapper.
+  - **Path sources** (`source = { path = "…" }`) — symlinked into
+    a Bazel repo via a thin `new_local_repository`-shaped rule.
+  - **Editable sources** — explicitly rejected with a clear error.
+* **Extras** (`requirement("pkg[extra]")`) — per-extra Bazel sub-targets
+  generated from each package's `[package.optional-dependencies]`
+  table. The extra target re-exports `:pkg` plus the extra's deps.
+* **Markers** (`marker = "python_full_version < '3.11'"`, etc.) —
+  evaluated at extension time against the configured `python_version`
+  + host platform. Edges whose markers fail are filtered out. PEP
+  508 subset: `python_version`, `python_full_version`, `os_name`,
+  `sys_platform`, `platform_system`, `platform_machine`, `extra`;
+  comparisons + `and`/`or`/`not`/`in`/`not in`/grouping.
 * End-to-end smoke test (`examples/smoke/`) — `py_test` that imports
-  certifi (pure-python wheel), idna (pure-python wheel), markupsafe
-  (native wheel, cp312 host-arch), and iniconfig (sdist install).
+  idna (pure wheel), markupsafe (native wheel), iniconfig (sdist
+  install), and uses `certifi[bundle]` (per-extra target). The lockfile
+  also includes a marker-gated edge that's correctly dropped.
 
-Deferred to v0.4 (see [`docs/ROADMAP.md`](docs/ROADMAP.md)):
+Deferred to v0.5 (see [`docs/ROADMAP.md`](docs/ROADMAP.md)):
 
-* Optional-dependency groups + per-marker resolution.
-* Git + path + editable lockfile sources.
 * Cross-platform wheels via `select()` for multi-target builds.
 * Migration to rules_python's `uv_toolchain` once it leaves
   experimental.
@@ -77,7 +90,7 @@ common --registry=https://bcr.bazel.build/
 `MODULE.bazel`:
 
 ```python
-bazel_dep(name = "rules_uv", version = "0.3.0")
+bazel_dep(name = "rules_uv", version = "0.4.0")
 bazel_dep(name = "rules_python", version = "1.7.0")
 
 uv = use_extension("@rules_uv//uv:extensions.bzl", "uv")

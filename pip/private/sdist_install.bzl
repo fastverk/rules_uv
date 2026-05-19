@@ -74,6 +74,7 @@ def _resolve_python(rctx):
     install_dir = rctx.path("python")
     args = [
         uv,
+        "--no-config",
         "python",
         "install",
         rctx.attr.python_version,
@@ -122,8 +123,13 @@ def _sdist_install_impl(rctx):
     # the dependency graph is reconstructed at Bazel-graph level via
     # the per-pkg BUILD files.
     uv_bin = str(rctx.path(rctx.attr.uv))
+    # `--no-config` keeps uv from reading the developer's
+    # ~/.config/uv/uv.toml, which on many hosts points at a private
+    # index that's unreachable from CI / sandboxed builds. Bazel
+    # should be hermetic; the user's uv config is not.
     args = [
         uv_bin,
+        "--no-config",
         "pip",
         "install",
         "--target=.",

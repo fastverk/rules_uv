@@ -11,11 +11,11 @@ filegroup(
     srcs = glob(["**/*.whl", "**/*.tar.gz"], allow_empty = True),
 )
 
-# For wheels, the unpacked contents already form an importable
-# package tree at the repo root; for sdists, this is a "we have the
-# tarball, downstream needs to install it" stub. v0.2 will wire
-# sdists through `uv pip install --target` to produce a proper
-# py_library tree.
+# `:pkg` is the unconditional dep set — every consumer of this
+# package picks this up. Per-extra targets (`:<extra>`) layer on
+# extra dependencies and re-export `:pkg`. Markers are evaluated at
+# extension time, so the `{DEPS}` and per-extra dep lists here are
+# already filtered against the host + python_version.
 py_library(
     name = "pkg",
     srcs = glob(
@@ -36,3 +36,4 @@ py_library(
     imports = ["."],
     deps = [{DEPS}],
 )
+{EXTRA_TARGETS}

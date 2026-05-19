@@ -43,20 +43,27 @@
       tag matching consults `python_version`; sdist install
       dispatches on `python`.
 
-## v0.4 (next)
+## v0.4 (this release)
 
-### Lockfile coverage gaps
+- [x] **Extras**: `requirement("pkg[extra]")` resolves to a per-extra
+      Bazel target that re-exports `:pkg` plus the extra's deps.
+      Generated from each package's
+      `[package.optional-dependencies]` table.
+- [x] **Markers**: PEP 508 subset evaluated at extension time
+      against `python_version` + host platform. Edges whose markers
+      fail are filtered out. Cross-platform `select()` is v0.5.
+- [x] **Git sources** (`source = { git = "…", rev = "…" }`):
+      `new_git_repository` with the BUILD wrapper.
+- [x] **Path sources** (`source = { path = "…" }`):
+      `new_local_repository`-style symlink rule.
+- [x] **Editable sources**: explicit failure with a clear message
+      (editable installs don't translate to Bazel).
+- [x] **Hermetic uv invocation**: `--no-config` on all `uv pip`
+      and `uv python install` calls so the user's
+      `~/.config/uv/uv.toml` (which on many machines points at a
+      private index) doesn't leak into sandbox builds.
 
-`uvlock_to_json.py` still drops several lockfile fields:
-
-- `optional-dependencies` (extras): we'd need a story for whether
-  extras compile into separate Bazel targets (`@pip//foo:bar[extra]`)
-  or into transitive deps gated by a flag.
-- `marker` (per-dep environment markers): `os_name == "posix"` etc.
-  Should map onto Bazel `select()` — same pattern rules_python uses.
-- Git + path + editable sources: skipped entirely. Path is the
-  easiest (just a `local_repository`); git is `git_repository`;
-  editable is a v0.5 conversation.
+## v0.5 (next)
 
 ### Cross-platform wheels
 
@@ -66,7 +73,21 @@ emit `select()` deps so the right wheel ships per platform. Today
 wheel selection happens once at repo-rule time against the host;
 this would push selection to analysis time.
 
-## Beyond v0.4
+### Smoke fixtures for git + path sources
+
+v0.4 wires git/path source materialization, but the smoke test
+doesn't exercise either. Adding a fixture that lock-files a tiny
+pure-Python package from a pinned GitHub commit (and a sibling
+local path package) would catch regressions in those code paths.
+
+### Marker evaluator: spot tests
+
+`pip/private/markers.bzl` is a hand-rolled PEP 508 subset parser.
+It would benefit from a skylib `unittest` suite covering the
+operators, precedence, and the comparison edge cases (especially
+`python_full_version` vs `python_version`).
+
+## Beyond v0.5
 
 - `uv_pip_compile`: `bazel run`-able workflow to regenerate
   `requirements.txt` from a `pyproject.toml` (analogous to rules_uv
