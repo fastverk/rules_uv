@@ -47,6 +47,20 @@ def _parse_wheel_filename(filename):
         platform_tags = parts[-1].split("."),
     )
 
+def _abi3_compatible_py_tags(python_version):
+    """For wheels declaring `abi3` (the stable ABI), the wheel's
+    `cpXY` py_tag is the *minimum* CPython version it requires, not
+    an exact match. Build a list of every `cpXY` tag from 3.0 up to
+    the host's `python_version`, so a `cp38-abi3-*` wheel matches on
+    `python_version="3.12"`.
+    """
+    major, minor = python_version.split(".")
+    out = []
+    host_minor = int(minor)
+    for m in range(host_minor, 2, -1):
+        out.append("cp{}{}".format(major, m))
+    return out
+
 def _score_tag(wheel_tags, host_tags):
     """Lowest index of any host tag that any wheel tag matches.
 
@@ -96,7 +110,15 @@ def select_artifact(pkg, host_platform, python_version):
         abi_rank = _score_tag(tags.abi_tags, host_pytags.abi)
         if abi_rank < 0:
             continue
-        py_rank = _score_tag(tags.py_tags, host_pytags.py)
+        # PEP 425 abi3 relaxation: when the wheel declares abi3,
+        # `cpXY` in its py_tags is a *minimum* version, not an
+        # exact match. Add backward-compatible cp tags to the host
+        # list before scoring so e.g. `cp38-abi3-*` matches a
+        # python_version="3.12" host.
+        py_match_tags = host_pytags.py
+        if "abi3" in tags.abi_tags:
+            py_match_tags = _abi3_compatible_py_tags(python_version) + host_pytags.py
+        py_rank = _score_tag(tags.py_tags, py_match_tags)
         if py_rank < 0:
             continue
 
@@ -123,9 +145,9 @@ def select_artifact(pkg, host_platform, python_version):
         )
 
     fail(
-        "rules_uv/pip: package {!r} has no wheel matching host={} " +
-        "python={} and no sdist. The lockfile must include either a " +
-        "compatible wheel or an sdist.".format(
+        ("rules_uv/pip: package '{}' has no wheel matching host={} " +
+         "python={} and no sdist. The lockfile must include either a " +
+         "compatible wheel or an sdist.").format(
             pkg.get("name", "<unnamed>"),
             host_platform,
             python_version,

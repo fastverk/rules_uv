@@ -48,7 +48,7 @@ def eval_marker(marker_str, env):
     tokens = _tokenize(marker_str)
     result, consumed = _parse_or(tokens, 0, env, marker_str)
     if consumed != len(tokens):
-        fail("rules_uv/markers: trailing tokens in {!r} (consumed {}/{}): {}".format(
+        fail("rules_uv/markers: trailing tokens in '{}' (consumed {}/{}): {}".format(
             marker_str, consumed, len(tokens), tokens[consumed:],
         ))
     return result
@@ -76,7 +76,7 @@ def host_env(host_platform, python_version, extra = ""):
         platform_system = "Windows"
         py_os_name = "nt"
     else:
-        fail("rules_uv/markers: unsupported host_platform {!r}".format(host_platform))
+        fail("rules_uv/markers: unsupported host_platform '{}'".format(host_platform))
 
     arch = parts[1] if len(parts) > 1 else ""
     if arch == "aarch64" and os_name_ == "darwin":
@@ -104,6 +104,17 @@ def host_env(host_platform, python_version, extra = ""):
         "sys_platform": sys_platform,
         "platform_system": platform_system,
         "platform_machine": platform_machine,
+        # PEP 508 also defines `implementation_name` (e.g. "cpython",
+        # "pypy") and `platform_python_implementation` (the
+        # title-cased form, "CPython", "PyPy"). We assume CPython —
+        # rules_uv's toolchain story is CPython-only today (uv's
+        # default Python is CPython; no rules_uv use case has
+        # surfaced for PyPy). When markers like
+        # `implementation_name == 'pypy'` show up in real lockfiles
+        # (selectsmart-engine has them on greenlet etc.), they
+        # evaluate to false and we drop those edges.
+        "implementation_name": "cpython",
+        "platform_python_implementation": "CPython",
         "extra": extra,
     }
 
@@ -163,7 +174,7 @@ def _tokenize(s):
             tokens.append(s[i:j])
             i = j
             continue
-        fail("rules_uv/markers: unexpected character {!r} at offset {} in {!r}".format(c, i, s))
+        fail("rules_uv/markers: unexpected character '{}' at offset {} in '{}'".format(c, i, s))
     return tokens
 
 def _peek(tokens, idx):
@@ -211,11 +222,11 @@ def _parse_cmp(tokens, idx, env, full):
 def _parse_atom(tokens, idx, env, full):
     tok = _peek(tokens, idx)
     if tok == None:
-        fail("rules_uv/markers: unexpected end of input in {!r}".format(full))
+        fail("rules_uv/markers: unexpected end of input in '{}'".format(full))
     if tok == "(":
         v, idx = _parse_or(tokens, idx + 1, env, full)
         if _peek(tokens, idx) != ")":
-            fail("rules_uv/markers: missing ) in {!r}".format(full))
+            fail("rules_uv/markers: missing ) in '{}'".format(full))
         return v, idx + 1
     if tok.startswith("STR:"):
         return tok[len("STR:"):], idx + 1
@@ -224,7 +235,7 @@ def _parse_atom(tokens, idx, env, full):
     # bugs in CI).
     if tok in env:
         return env[tok], idx + 1
-    fail("rules_uv/markers: unknown variable or keyword {!r} in {!r}".format(tok, full))
+    fail("rules_uv/markers: unknown variable or keyword '{}' in '{}'".format(tok, full))
 
 def _apply_cmp(left, op, right):
     # All variable values are strings; comparisons follow Python's
@@ -250,7 +261,7 @@ def _apply_cmp(left, op, right):
         return right.find(left) >= 0
     if op == "not in":
         return right.find(left) < 0
-    fail("rules_uv/markers: unhandled comparison op {!r}".format(op))
+    fail("rules_uv/markers: unhandled comparison op '{}'".format(op))
 
 def _version_lt(a, b):
     """Compare two dotted version strings numerically component-wise.

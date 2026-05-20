@@ -393,7 +393,7 @@ def _split_extra(name):
         return _norm(name), ""
     rbracket = name.find("]", lbracket)
     if rbracket < 0:
-        fail("rules_uv/pip: malformed requirement {{!r}} (missing ])".format(name))
+        fail("rules_uv/pip: malformed requirement '{{}}' (missing ])".format(name))
     return _norm(name[:lbracket]), name[lbracket + 1:rbracket]
 
 def _norm(name):
@@ -433,7 +433,7 @@ def _path_repo_impl(rctx):
     src = rctx.workspace_root.get_child(rctx.attr.path)
     if not src.exists:
         fail(
-            "rules_uv/pip: path source {!r} does not exist " +
+            "rules_uv/pip: path source '{}' does not exist " +
             "(resolved from workspace root: {})".format(
                 rctx.attr.path,
                 src,
@@ -539,6 +539,55 @@ def _read_lock(mctx, lock_label):
         fail("rules_uv/pip: uvlock_to_json failed: " + result.stderr)
     return json.decode(result.stdout)
 
+def _reachable_packages(lock, env):
+    """Compute the set of package names reachable from the lockfile's
+    roots (editable / virtual entries) plus dependency-groups, walking
+    only edges whose markers pass against `env`.
+
+    uv records every package the resolver considered — including
+    platform-gated ones (e.g. pywin32 under
+    `sys_platform == 'win32'`). On hosts those edges don't apply to,
+    those packages have no host-compatible artifact and shouldn't be
+    materialized. Reachability filters them out.
+
+    Extras are included transitively: when a package is reachable,
+    every member of its `optional_dependencies` is reachable too —
+    users can always opt into an extra via `requirement("pkg[extra]")`,
+    so we keep the option open at materialization time.
+    """
+    by_name = {pkg["name"]: pkg for pkg in lock["packages"]}
+    visited = {}
+    stack = []
+    for pkg in lock["packages"]:
+        kind = pkg.get("source", {}).get("kind", "")
+        if kind in ("editable", "virtual"):
+            stack.append(pkg["name"])
+    for edges in (lock.get("dependency_groups") or {}).values():
+        for d in edges:
+            if eval_marker(d.get("marker", ""), env):
+                n = d.get("name", "")
+                if n:
+                    stack.append(n)
+    for _ in range(len(by_name) * 2 + 100):  # Starlark needs an explicit bound.
+        if not stack:
+            break
+        name = stack.pop()
+        if name in visited or name not in by_name:
+            continue
+        visited[name] = True
+        pkg = by_name[name]
+        for d in pkg.get("dependencies", []):
+            if not eval_marker(d.get("marker", ""), env):
+                continue
+            n = d.get("name", "")
+            if n and n not in visited:
+                stack.append(n)
+        for members in (pkg.get("optional_dependencies") or {}).values():
+            for m in members:
+                if m not in visited:
+                    stack.append(m)
+    return visited
+
 def _pip_extension_impl(mctx):
     build_tpl_path = mctx.path(
         Label("//pip/private:pip_package.BUILD.tpl"),
@@ -549,6 +598,8 @@ def _pip_extension_impl(mctx):
     for mod in mctx.modules:
         for tag in mod.tags.parse:
             lock = _read_lock(mctx, tag.lock)
+            env = host_env(host, tag.python_version)
+            reachable = _reachable_packages(lock, env)
             pkg_names = []
             known_names = {pkg["name"]: True for pkg in lock["packages"]}
             for pkg in lock["packages"]:
@@ -564,6 +615,10 @@ def _pip_extension_impl(mctx):
                             pkg.get("name", "<unnamed>"),
                         ),
                     )
+                if pkg["name"] not in reachable:
+                    # Filtered by reachability — typically a platform-
+                    # gated package on a host where it's not selected.
+                    continue
                 _make_pkg_repo(
                     hub_name = tag.hub_name,
                     pkg = pkg,
@@ -580,7 +635,6 @@ def _pip_extension_impl(mctx):
             # uvlock_to_json.py from the workspace-root editable
             # entry's `dev-dependencies` table) to `{group: [pkg_name, ...]}`,
             # honouring per-edge markers against the host env.
-            env = host_env(host, tag.python_version)
             group_pkg_names = {}
             for group_name, edges in (lock.get("dependency_groups") or {}).items():
                 kept = _filter_deps(edges, env, "<group:{}>".format(group_name))
@@ -670,7 +724,7 @@ def _resolve_platforms(tag_platforms, host):
     for plat in tag_platforms:
         if plat not in SUPPORTED_PLATFORMS:
             fail(
-                "rules_uv/pip: unsupported platform {!r} in pip.parse(platforms=...). " +
+                "rules_uv/pip: unsupported platform '{}' in pip.parse(platforms=...). " +
                 "Supported: {}.".format(plat, SUPPORTED_PLATFORMS),
             )
     return tag_platforms

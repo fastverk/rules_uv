@@ -4,6 +4,43 @@ All notable changes to rules_uv. The format is loosely
 [Keep a Changelog](https://keepachangelog.com/) — version headers
 mirror the published bazel-registry entries.
 
+## 0.7.1 — real-world lockfile bug fixes
+
+Surfaced when wiring selectsmart-engine (an 89-package uv workspace
+lockfile) through `rules_uv` end-to-end:
+
+- **Starlark `{!r}` format strings**: Starlark's `str.format()`
+  doesn't support Python's `{!r}` repr conversion. We had ~10
+  instances in error-path code (`markers.bzl`, `wheel_selection.bzl`,
+  `pip/extensions.bzl`) that crashed with `Error in format: Missing
+  argument '!r'` whenever they fired — masking the actual upstream
+  errors. Replaced with explicit `'{}'` quoting.
+- **PEP 508 environment variables**: added
+  `implementation_name = "cpython"` and
+  `platform_python_implementation = "CPython"` to the marker env.
+  selectsmart-engine's lockfile carries
+  `marker = "implementation_name == 'pypy'"` and similar on a few
+  edges; without these vars the marker parser failed loudly.
+  rules_uv is CPython-only today, so the values are constants.
+- **Reachability filter**: lockfiles list every package the resolver
+  considered, including platform-gated ones like `pywin32` (only
+  reached via `sys_platform == 'win32'` edges). On hosts where those
+  edges fail, the packages have no host-compatible artifact and we
+  used to hard-fail trying to materialize them. v0.7.1 walks the
+  dependency graph from each root (editable/virtual entries +
+  dep-groups), filtering edges by host markers, and only
+  materializes the reachable set. Extras are pulled in transitively.
+- **PEP 425 abi3 stable-ABI relaxation**: a wheel tagged
+  `cp38-abi3-<plat>` (e.g. tornado, cryptography) is installable on
+  any CPython ≥ 3.8 with the same platform. Our wheel selector
+  required exact `cpXY` matches and rejected the wheel. Fixed by
+  building an `abi3_compatible_py_tags()` helper that returns
+  `[cp{host_minor}, cp{host_minor-1}, …, cp30]` and using it for
+  py-tag scoring only when the wheel declares `abi3` in its abi
+  field.
+
+No API changes; existing fixtures still pass.
+
 ## 0.7.0 — editable workspace roots + PEP 735 dependency groups
 
 - **Editable workspace roots are now skipped, not rejected.** uv
