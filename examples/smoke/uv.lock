@@ -5,12 +5,26 @@ requires-python = ">=3.10"
 [[package]]
 name = "smoke"
 version = "0.0.0"
-source = { virtual = "." }
+# Editable workspace-root entry — uv writes this when a project
+# is part of a workspace. v0.7's extension skips materializing it
+# (the consumer's own source lives in their own Bazel targets) but
+# DOES hoist its `dev-dependencies` table to surface as
+# `group("<name>")` callables on the hub.
+source = { editable = "." }
 dependencies = [
     { name = "certifi" },
     { name = "idna" },
     { name = "iniconfig" },
     { name = "markupsafe" },
+]
+
+# PEP 735 dependency groups. uv collapses every named group under
+# this single TOML key (the name is misleading — it carries `dev`,
+# `test`, `docs`, etc.). Each entry mirrors the main `dependencies`
+# shape and can carry markers + extras per-edge.
+[package.dev-dependencies]
+dev = [
+    { name = "iniconfig" },
 ]
 
 [[package]]

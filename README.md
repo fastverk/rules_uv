@@ -14,7 +14,29 @@ high-speed Python package + project manager. Two pieces:
    aggregating hub repo with a `requirement("<name>")` macro, and
    transitive deps wired up by the lockfile.
 
-## Status: v0.6
+## Status: v0.7
+
+What v0.7 adds on top of v0.6:
+
+- **Editable workspace roots** — `uv.lock` entries with
+  `source = { editable = "." }` (uv's standard pattern for a
+  workspace's own project) are now skipped rather than rejected.
+  Their attached `dev-dependencies` table is mined for PEP 735
+  dependency groups.
+- **PEP 735 dependency groups** — new `group(name)` macro in the
+  hub's `requirements.bzl` returns labels for every package in a
+  named group. Markers + extras per edge are honoured.
+
+```python
+load("@pip//:requirements.bzl", "requirement", "group")
+
+py_test(
+    name = "tests",
+    deps = [requirement("my_lib")] + group("dev"),
+)
+```
+
+
 
 What ships:
 

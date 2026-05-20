@@ -8,6 +8,15 @@ keys verbatim, so any change here is a coordinated change to
 
     {
       "requires_python": ">=3.10",
+      "dependency_groups": {
+        # PEP 735 dependency groups (uv records them under the
+        # workspace-root editable entry's `dev-dependencies` table —
+        # the key is misleading; it holds ALL groups, not just
+        # `dev`). We collapse them to a top-level map: group name →
+        # list of dep edges (name, marker, extras).
+        "dev":  [{"name": "pytest", "marker": "", "extras": []}],
+        "docs": [{"name": "sphinx", "marker": "", "extras": []}],
+      },
       "packages": [
         {
           "name": "requests",
@@ -125,6 +134,27 @@ def _extras(pkg: dict) -> dict:
     return out
 
 
+def _dependency_groups(lock: dict) -> dict:
+    """Hoist PEP 735 dependency groups to a top-level map.
+
+    uv attaches them to whichever package entry represents the
+    workspace root (typically `source = { editable = "." }` or
+    `source = { virtual = "." }`). The TOML key is
+    `dev-dependencies`, which is misleading — it carries every
+    named group (`dev`, `test`, `docs`, …), not just `dev`. We
+    look for the editable/virtual entry and pick that up.
+    """
+    out: dict = {}
+    for pkg in lock.get("package", []):
+        src = pkg.get("source") or {}
+        if "editable" not in src and "virtual" not in src:
+            continue
+        groups = pkg.get("dev-dependencies") or {}
+        for name, entries in groups.items():
+            out[name] = [_dep(d) for d in entries if isinstance(d, dict)]
+    return out
+
+
 def project(lock: dict) -> dict:
     out_packages = []
     for pkg in lock.get("package", []):
@@ -150,6 +180,7 @@ def project(lock: dict) -> dict:
         })
     return {
         "requires_python": lock.get("requires-python", ""),
+        "dependency_groups": _dependency_groups(lock),
         "packages": out_packages,
     }
 

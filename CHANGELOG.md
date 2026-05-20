@@ -4,6 +4,37 @@ All notable changes to rules_uv. The format is loosely
 [Keep a Changelog](https://keepachangelog.com/) — version headers
 mirror the published bazel-registry entries.
 
+## 0.7.0 — editable workspace roots + PEP 735 dependency groups
+
+- **Editable workspace roots are now skipped, not rejected.** uv
+  writes `source = { editable = "." }` on the project's own entry
+  in `uv.lock`; v0.5 explicitly failed with "convert to a path
+  source". v0.7 skips the entry silently — the consumer's source
+  already lives in their own Bazel targets — but still mines the
+  attached `dev-dependencies` table for dep-groups (see below).
+  Closes the v0.6 compatibility gap that blocked uv workspaces.
+- **PEP 735 dependency groups** are now first-class. The lockfile
+  parser (`uvlock_to_json.py`) hoists `[package.dev-dependencies]`
+  (which despite the name carries every named group — `dev`,
+  `test`, `docs`, …) to a top-level map. Per-edge markers and
+  extras are honoured. The hub repo emits a new `group(name)`
+  macro alongside `requirement()`:
+
+  ```python
+  load("@pip//:requirements.bzl", "requirement", "group")
+  py_test(
+      name = "tests",
+      deps = [requirement("my_lib")] + group("dev"),
+  )
+  ```
+
+  `ALL_GROUPS` constant lists every defined group name for
+  introspection. Unknown group name fails the load with the known
+  set.
+- Smoke fixture now exercises both: lockfile's `smoke` entry is
+  `editable = "."` with a `dev = [{name = "iniconfig"}]` group;
+  `examples/smoke:smoke_test` pulls iniconfig via `group("dev")`.
+
 ## 0.6.0 — pure-Python sdists in multi-platform mode
 
 - Pure-Python sdists are now allowed in `pip.parse(platforms = ...)`

@@ -179,13 +179,15 @@ def _make_pkg_repo(hub_name, pkg, build_tpl, host, python_version,
         return
 
     if kind == "editable":
-        fail(
-            "rules_uv/pip: package {} uses an editable source. " +
-            "Editable installs are not supported in Bazel — convert " +
-            "to a path source or to a normal sdist/wheel entry.".format(
-                pkg["name"],
-            ),
-        )
+        # Editable entries are uv's bookkeeping for workspace
+        # members (root project carries `source = { editable = "." }`
+        # and pulls in PEP 735 dependency-groups via its
+        # dev-dependencies table). They aren't installed as pip
+        # packages — the consumer's Bazel rules already cover their
+        # own source. Skip silently here; the dep-groups attached
+        # to the entry are hoisted at lockfile-parse time and
+        # surfaced via the hub's `group()` macro.
+        return
 
     # Default = registry/url. Decide between host-only single-repo
     # and the multi-platform select() path.
@@ -313,6 +315,18 @@ def _hub_repo_impl(repository_ctx):
             '    "{}": Label("@{}//:{}"),'.format(norm, hub_name, norm),
         )
 
+    # Group entries arrive as "name=pkg1,pkg2,..." strings (repository_rule
+    # attrs can't be dicts) — unpack to {group: [normalized_pkg, ...]}.
+    group_entries = []
+    for raw in repository_ctx.attr.group_members:
+        gname, _, csv = raw.partition("=")
+        members = [_normalize(m) for m in csv.split(",") if m]
+        labels = ['Label("@{}//:{}")'.format(hub_name, m) for m in members]
+        group_entries.append('    "{}": [{}],'.format(
+            gname,
+            ", ".join(labels),
+        ))
+
     # Extras live in the per-package repos; the hub just needs to
     # know which base packages exist so `requirement("foo[bar]")`
     # can rewrite to `@<hub>__foo//:bar`. The macro below does that.
@@ -328,6 +342,10 @@ exports_files(["requirements.bzl"])
 
 _REQUIREMENTS = {{
 {entries}
+}}
+
+_GROUPS = {{
+{groups}
 }}
 
 _HUB = "{hub}"
@@ -348,6 +366,26 @@ def requirement(name):
         return Label("@{{}}__{{}}//:{{}}".format(_HUB, norm, extra))
     return _REQUIREMENTS[norm]
 
+def group(name):
+    \"\"\"Return labels for every package in a PEP 735 dependency group.
+
+    The group set is hoisted from the workspace-root editable
+    entry's `dev-dependencies` table (which carries ALL named
+    groups, not just `dev`). Per-edge markers are filtered against
+    the host env at extension time.
+
+    Example:
+      py_test(
+          name = "tests",
+          deps = [requirement("my_lib")] + group("dev"),
+      )
+    \"\"\"
+    if name not in _GROUPS:
+        fail("rules_uv/pip: unknown dependency group '{{}}' (known: {{}})".format(
+            name, sorted(_GROUPS.keys()),
+        ))
+    return list(_GROUPS[name])
+
 def _split_extra(name):
     \"\"\"Parse 'pkg[extra]' → (pkg, extra). Returns (pkg, '') if no extra.\"\"\"
     lbracket = name.find("[")
@@ -362,8 +400,10 @@ def _norm(name):
     return name.lower().replace("_", "-").replace(".", "-")
 
 ALL_REQUIREMENTS = [v for _, v in sorted(_REQUIREMENTS.items())]
+ALL_GROUPS = sorted(_GROUPS.keys())
 """.format(
         entries = "\n".join(requirement_entries),
+        groups = "\n".join(group_entries),
         hub = hub_name,
     ))
 
@@ -372,6 +412,15 @@ _hub_repo = repository_rule(
     attrs = {
         "hub_name": attr.string(mandatory = True),
         "package_names": attr.string_list(mandatory = True),
+        "group_names": attr.string_list(
+            default = [],
+            doc = "Names of PEP 735 dependency groups defined in the lockfile.",
+        ),
+        "group_members": attr.string_list(
+            default = [],
+            doc = "`group=pkg1,pkg2,...` entries (one per group). " +
+                  "string_list because repository_rule attrs can't be dicts.",
+        ),
     },
 )
 
@@ -501,6 +550,7 @@ def _pip_extension_impl(mctx):
         for tag in mod.tags.parse:
             lock = _read_lock(mctx, tag.lock)
             pkg_names = []
+            known_names = {pkg["name"]: True for pkg in lock["packages"]}
             for pkg in lock["packages"]:
                 kind = pkg.get("source", {}).get("kind", "unknown")
                 if kind == "virtual":
@@ -525,10 +575,29 @@ def _pip_extension_impl(mctx):
                     target_platforms = _resolve_platforms(tag.platforms, host),
                 )
                 pkg_names.append(pkg["name"])
+
+            # Collapse PEP 735 dependency groups (hoisted by
+            # uvlock_to_json.py from the workspace-root editable
+            # entry's `dev-dependencies` table) to `{group: [pkg_name, ...]}`,
+            # honouring per-edge markers against the host env.
+            env = host_env(host, tag.python_version)
+            group_pkg_names = {}
+            for group_name, edges in (lock.get("dependency_groups") or {}).items():
+                kept = _filter_deps(edges, env, "<group:{}>".format(group_name))
+                # Drop entries pointing at editable/virtual workspace
+                # members — the user's own source is not a pip dep.
+                kept = [n for n in kept if n in known_names]
+                group_pkg_names[group_name] = kept
+
             _hub_repo(
                 name = tag.hub_name,
                 hub_name = tag.hub_name,
                 package_names = pkg_names,
+                group_names = sorted(group_pkg_names.keys()),
+                group_members = [
+                    "{}={}".format(g, ",".join(group_pkg_names[g]))
+                    for g in sorted(group_pkg_names.keys())
+                ],
             )
 
 _parse_tag = tag_class(attrs = {

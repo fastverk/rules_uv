@@ -1,4 +1,4 @@
-load("@pip//:requirements.bzl", "requirement")
+load("@pip//:requirements.bzl", "group", "requirement")
 load("@rules_python//python:defs.bzl", "py_test")
 load("@rules_uv//uv:defs.bzl", "uv_run")
 
@@ -8,14 +8,16 @@ py_test(
     deps = [
         # Base targets.
         requirement("idna"),
-        requirement("iniconfig"),
         requirement("markupsafe"),
         # Per-extra target: certifi's synthetic `bundle` extra
         # re-exports `:pkg` and adds a dep on idna. We pull this
         # instead of plain `requirement("certifi")` to exercise
         # the `pkg[extra]` resolution path.
         requirement("certifi[bundle]"),
-    ],
+    # PEP 735 dependency-group expansion (v0.7). The smoke lockfile's
+    # editable root carries `[package.dev-dependencies] dev = [{name = "iniconfig"}]`
+    # — `group("dev")` returns `[Label("@pip//:iniconfig")]`.
+    ] + group("dev"),
 )
 
 # Smoke target for `uv_run` — `bazel run //examples/smoke:uv_version`
