@@ -144,15 +144,16 @@ def select_artifact(pkg, host_platform, python_version):
             filename = sdist["url"].rsplit("/", 1)[-1],
         )
 
-    fail(
-        ("rules_uv/pip: package '{}' has no wheel matching host={} " +
-         "python={} and no sdist. The lockfile must include either a " +
-         "compatible wheel or an sdist.").format(
-            pkg.get("name", "<unnamed>"),
-            host_platform,
-            python_version,
-        ),
-    )
+    # Graceful skip: the package has no host-compatible artifact
+    # (and no sdist fallback). Return None so the caller can drop
+    # it from the hub rather than failing the whole pip.parse —
+    # platform-specific packages like ddtrace (Linux-only wheels on
+    # some private mirrors) are common in real-world lockfiles
+    # and shouldn't block local dev on macOS. Consumer-side
+    # `requirement(...)` for a skipped package fails with the
+    # known-packages list, which is the right surface for that
+    # error.
+    return None
 
 def select_artifacts_per_platform(pkg, python_version, platforms):
     """Per-platform artifact selection for cross-platform builds.

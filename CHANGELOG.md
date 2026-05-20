@@ -4,6 +4,29 @@ All notable changes to rules_uv. The format is loosely
 [Keep a Changelog](https://keepachangelog.com/) — version headers
 mirror the published bazel-registry entries.
 
+## 0.7.2 — graceful skip for platform-incompatible packages
+
+Real-world lockfiles often pin packages whose wheels only cover
+some platforms (Datadog's `ddtrace`, the SAVVI private mirror's
+build of `ddtrace` ships Linux + Windows wheels only; macOS arm64
+local dev hits a wall). The reachability filter walks every edge
+without a marker, so these packages get visited and v0.7.1 then
+failed `pip.parse` for the entire lockfile.
+
+v0.7.2:
+
+- `select_artifact()` returns `None` instead of `fail()`-ing when
+  no host-compatible wheel exists and no sdist fallback is
+  available.
+- `_make_pkg_repo` returns the sentinel `"skipped:no-artifact"`
+  for these; the caller drops them from the hub's `requirement()`
+  set. Consumer-side `requirement("ddtrace")` then fails with
+  "unknown package" + the known-packages list — the right surface
+  for that error vs. a top-level pip.parse explosion.
+- Multi-platform mode (`pip.parse(platforms = [...])`) keeps the
+  fail-loudly behavior; cross-platform builds genuinely need a
+  resolvable artifact on every requested platform.
+
 ## 0.7.1 — real-world lockfile bug fixes
 
 Surfaced when wiring selectsmart-engine (an 89-package uv workspace

@@ -194,6 +194,11 @@ def _make_pkg_repo(hub_name, pkg, build_tpl, host, python_version,
     if len(target_platforms) <= 1:
         # Host-only path (v0.4 behavior preserved).
         artifact = select_artifact(pkg, host, python_version)
+        if artifact == None:
+            # No host-compatible artifact (e.g. Linux-only wheel
+            # from a private mirror with no sdist fallback). Signal
+            # to the caller to drop this package from the hub.
+            return "skipped:no-artifact"
         _materialize_single(
             repo_name = repo_name,
             artifact = artifact,
@@ -619,7 +624,7 @@ def _pip_extension_impl(mctx):
                     # Filtered by reachability — typically a platform-
                     # gated package on a host where it's not selected.
                     continue
-                _make_pkg_repo(
+                result = _make_pkg_repo(
                     hub_name = tag.hub_name,
                     pkg = pkg,
                     build_tpl = build_tpl,
@@ -629,6 +634,11 @@ def _pip_extension_impl(mctx):
                     uv_label = tag.uv,
                     target_platforms = _resolve_platforms(tag.platforms, host),
                 )
+                if result == "skipped:no-artifact":
+                    # Don't surface this package via `requirement(...)`;
+                    # any consumer reference fails loudly with the
+                    # known-packages list.
+                    continue
                 pkg_names.append(pkg["name"])
 
             # Collapse PEP 735 dependency groups (hoisted by
