@@ -593,6 +593,20 @@ def _reachable_packages(lock, env):
                     stack.append(m)
     return visited
 
+def _package_in_scope(pkg, env):
+    """A package's `resolution-markers` are uv's way of saying
+    "this entry only applies to these envs". When the list is
+    non-empty, the entry is in-scope iff at least one marker
+    passes. (Empty list means unconditional — the common case.)
+    """
+    markers = pkg.get("resolution_markers", [])
+    if not markers:
+        return True
+    for m in markers:
+        if eval_marker(m, env):
+            return True
+    return False
+
 def _pip_extension_impl(mctx):
     build_tpl_path = mctx.path(
         Label("//pip/private:pip_package.BUILD.tpl"),
@@ -604,6 +618,12 @@ def _pip_extension_impl(mctx):
         for tag in mod.tags.parse:
             lock = _read_lock(mctx, tag.lock)
             env = host_env(host, tag.python_version)
+            # Drop package entries that don't apply to this env up
+            # front — when uv emits multiple `[[package]]` blocks
+            # with the same name gated on different Python
+            # versions, only the env-matching one survives.
+            lock = dict(lock)
+            lock["packages"] = [p for p in lock["packages"] if _package_in_scope(p, env)]
             reachable = _reachable_packages(lock, env)
             pkg_names = []
             known_names = {pkg["name"]: True for pkg in lock["packages"]}

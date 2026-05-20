@@ -49,8 +49,11 @@ keys verbatim, so any change here is a coordinated change to
     }
 
 We deliberately drop fields rules_uv doesn't yet use (build
-constraints, conflicting groups, resolution-markers). v0.5 can lift
-them when the surface justifies it.
+constraints, conflicting groups). Resolution-markers ARE projected
+(v0.7.3+) — when a lockfile has multiple entries with the same
+package name gated on different Python versions, the extension
+filters them at materialize time so only the env-matching variant
+wins.
 
 Why a script and not pure Starlark: uv.lock is TOML, and Starlark
 has no TOML parser. Bazel's repo rules can shell out to the host
@@ -177,6 +180,12 @@ def project(lock: dict) -> dict:
             "optional_dependencies": _extras(pkg),
             "wheels": wheels,
             "sdist": sdist_out,
+            # uv writes a `resolution-markers` array on package
+            # entries that only apply to a subset of resolution
+            # envs (most commonly per-Python-version variants).
+            # If the list is non-empty, ANY marker passing for the
+            # host means the entry is in-scope.
+            "resolution_markers": list(pkg.get("resolution-markers") or []),
         })
     return {
         "requires_python": lock.get("requires-python", ""),
