@@ -132,10 +132,13 @@ def _make_pkg_repo(hub_name, pkg, build_tpl, host, python_version,
     behind a selector that `select()`s on Bazel's @platforms
     constraint values.
 
-    Sdist and git/path sources stay single-repo (host-only at
-    fetch time). A multi-platform build that depends on an sdist
-    package will only work for the host platform; this is a known
-    v0.5 limitation tracked in the roadmap.
+    Sdist packages in multi-platform mode are installed once on the
+    host with `forbid_native_extensions=True` — pure-Python sdists
+    install cleanly and become a single platform-agnostic repo
+    (same shape as a pure-Python wheel); sdists that build native
+    code fail loudly because cross-arch builds of a host-installed
+    sdist aren't safe. Git/path sources still stay single-repo
+    (host-only at fetch time).
     """
     source = pkg.get("source", {})
     kind = source.get("kind", "unknown")
@@ -218,22 +221,36 @@ def _make_pkg_repo(hub_name, pkg, build_tpl, host, python_version,
         return
 
     # Platform-divergent: native wheels per platform (and/or sdists).
-    # Sdists are host-only; if any platform falls back to sdist in
-    # multi-platform mode, fail loudly — the consumer should be
-    # aware of the broken-for-cross-platform contract.
+    # If every platform has a wheel — fan out as before. If any
+    # platform resolves to an sdist, install it once on the host with
+    # native-extension forbidding: pure-Python sdists install cleanly
+    # and become a single platform-agnostic repo (no selector); sdists
+    # with native code fail loudly with a clear pointer.
+    sdist_platforms = [
+        plat
+        for plat, art in artifacts.per_platform.items()
+        if art.kind != "wheel"
+    ]
+    if sdist_platforms:
+        # Pick the sdist (uv's resolver may have selected the same
+        # one for every sdist-only platform — they're all the same
+        # source artifact).
+        sdist_art = artifacts.per_platform[sdist_platforms[0]]
+        sdist_install_repo(
+            name = repo_name,
+            url = sdist_art.url,
+            sha256 = sdist_art.sha256,
+            pkg_name = pkg["name"],
+            pkg_version = pkg.get("version", ""),
+            deps = dep_labels,
+            uv = uv_label,
+            python_strategy = python_strategy,
+            python_version = python_version,
+            forbid_native_extensions = True,
+        )
+        return
+
     for plat, art in artifacts.per_platform.items():
-        if art.kind != "wheel":
-            fail(
-                "rules_uv/pip: package {!r} resolves to an sdist for " +
-                "platform {} but multi-platform mode is enabled. " +
-                "Sdist install is host-only; pick a lockfile entry " +
-                "with native wheels for every target platform, or drop " +
-                "{} from `platforms`.".format(
-                    pkg.get("name", "<unnamed>"),
-                    plat,
-                    plat,
-                ),
-            )
         platform_repo_name = "{}__{}".format(repo_name, plat)
         http_archive(
             name = platform_repo_name,

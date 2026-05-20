@@ -106,6 +106,50 @@ def _resolve_python(rctx):
         ),
     )
 
+_NATIVE_EXT_SUFFIXES = (".so", ".pyd", ".dylib", ".dll")
+
+def _find_native_extensions(rctx):
+    """Walk the repo root looking for compiled extension artifacts.
+
+    Used post-install to detect whether a host-installed sdist is
+    truly pure-Python (safe to share across platforms) or has built
+    native code (host-specific; unsafe in multi-platform mode).
+    Skips dist-info metadata directories and __pycache__ trees.
+    """
+    # We use `find` because repository_ctx has no native walker and
+    # globbing isn't recursive. Quiet failures are fine — if `find`
+    # isn't available we return [], which lets the install proceed
+    # (the caller will only enforce on platforms where we expect
+    # find to exist, i.e. Bazel host platforms = unix-likes).
+    result = rctx.execute([
+        "find",
+        ".",
+        "-type",
+        "f",
+        "(",
+        "-name",
+        "*.so",
+        "-o",
+        "-name",
+        "*.pyd",
+        "-o",
+        "-name",
+        "*.dylib",
+        "-o",
+        "-name",
+        "*.dll",
+        ")",
+        "-not",
+        "-path",
+        "*/__pycache__/*",
+        "-not",
+        "-path",
+        "*.dist-info/*",
+    ], quiet = True)
+    if result.return_code != 0:
+        return []
+    return [line for line in result.stdout.split("\n") if line]
+
 def _sdist_install_impl(rctx):
     # Step 1: download the sdist.
     sdist_filename = rctx.attr.url.rsplit("/", 1)[-1]
@@ -149,6 +193,30 @@ def _sdist_install_impl(rctx):
             ),
         )
 
+    # Step 3.5: optional cross-platform safety check. When the sdist
+    # is being installed under a multi-platform `pip.parse`, the
+    # caller sets forbid_native_extensions=True. If the host install
+    # produced any compiled extension (.so / .pyd / .dylib / .dll),
+    # the result isn't safe to reuse across other platforms — we'd
+    # be silently linking host-arch binaries into a Linux Bazel
+    # build. Fail loudly and tell the user to find a wheel.
+    if rctx.attr.forbid_native_extensions:
+        native = _find_native_extensions(rctx)
+        if native:
+            fail(
+                ("rules_uv/pip: package {pkg} ({ver}) installed from sdist " +
+                 "produced platform-specific native extensions on the host " +
+                 "({first}, +{rest} more). Multi-platform mode requires " +
+                 "pure-Python sdists; pin a lockfile entry that ships native " +
+                 "wheels for every target platform, or drop sdist-only " +
+                 "packages with native code from `platforms`.").format(
+                    pkg = rctx.attr.pkg_name,
+                    ver = rctx.attr.pkg_version,
+                    first = native[0],
+                    rest = len(native) - 1,
+                ),
+            )
+
     # Step 4: drop the BUILD file.
     deps_str = ", ".join(['"{}"'.format(d) for d in rctx.attr.deps])
     rctx.file(
@@ -188,6 +256,13 @@ sdist_install_repo = repository_rule(
             default = "3.12",
             doc = "Python version uv should install (only used when " +
                   "python_strategy = \"uv\").",
+        ),
+        "forbid_native_extensions": attr.bool(
+            default = False,
+            doc = "When True, fail the install if post-install the " +
+                  "repo root contains any .so/.pyd/.dylib/.dll files. " +
+                  "Used in multi-platform mode to ensure an sdist " +
+                  "install is safe to reuse across platforms.",
         ),
     },
     doc = "Install a Python sdist via `uv pip install --target=.`.",

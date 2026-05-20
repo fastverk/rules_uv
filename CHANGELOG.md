@@ -4,6 +4,27 @@ All notable changes to rules_uv. The format is loosely
 [Keep a Changelog](https://keepachangelog.com/) — version headers
 mirror the published bazel-registry entries.
 
+## 0.6.0 — pure-Python sdists in multi-platform mode
+
+- Pure-Python sdists are now allowed in `pip.parse(platforms = ...)`
+  lockfiles. The extension installs the sdist once on the host
+  with `sdist_install_repo(forbid_native_extensions = True)`; the
+  result is a single platform-agnostic repo shared by every
+  target platform (same shape as a pure-Python wheel — no
+  selector needed). v0.5 had this case fail loudly; the v0.6 path
+  closes the gap for the common case (one-file utility packages
+  that never bothered shipping wheels — `six` 1.4.1 is the smoke-
+  test case in `examples/multiplatform/`).
+- Sdists that produce native extensions on the host install
+  (`.so` / `.pyd` / `.dylib` / `.dll` files in the repo root)
+  still fail loudly — cross-arch reuse of a host-built native
+  extension would silently link wrong-arch binaries into other
+  platforms. The error message points at the alternatives (pin a
+  wheel, or drop the unsupported platform from `platforms`).
+- New `sdist_install_repo(forbid_native_extensions)` attr;
+  default `False` so single-platform host-only installs work
+  exactly like before.
+
 ## 0.5.1 — docs + CI infrastructure
 
 - Stardoc-generated reference docs in `docs/` for `uv_run`,

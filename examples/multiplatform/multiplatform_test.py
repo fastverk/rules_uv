@@ -15,6 +15,14 @@ class MultiplatformTest(unittest.TestCase):
         import idna
         self.assertEqual(idna.encode("example.com").decode(), "example.com")
 
+    def test_pure_sdist_in_multiplatform(self):
+        # `six` 1.4.1 is sdist-only — exercises the v0.6 codepath
+        # where the extension installs the sdist on the host with
+        # `forbid_native_extensions=True` and reuses a single repo
+        # across every target platform.
+        import six
+        self.assertTrue(six.PY3)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -7,5 +7,6 @@ py_test(
     deps = [
         requirement("idna"),         # pure wheel: single repo, no select
         requirement("markupsafe"),   # native wheel: per-platform select
+        requirement("six"),          # pure-python sdist-only: single repo via host install (v0.6)
     ],
 )

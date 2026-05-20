@@ -14,7 +14,7 @@ high-speed Python package + project manager. Two pieces:
    aggregating hub repo with a `requirement("<name>")` macro, and
    transitive deps wired up by the lockfile.
 
-## Status: v0.5
+## Status: v0.6
 
 What ships:
 
@@ -49,13 +49,19 @@ What ships:
   508 subset: `python_version`, `python_full_version`, `os_name`,
   `sys_platform`, `platform_system`, `platform_machine`, `extra`;
   comparisons + `and`/`or`/`not`/`in`/`not in`/grouping.
-* **Cross-platform wheels** (`pip.parse(platforms = [...])`) — when
-  the consumer opts into multi-platform mode, packages with
-  platform-divergent native wheels fan out into per-platform repos
-  behind a selector that `alias`-`select()`s on `@platforms//os` +
-  `@platforms//cpu`. Pure-python wheels stay single-repo
-  (platform-agnostic). Sdist + git + path packages remain host-only
-  and fail loudly if a cross-platform build tries to resolve them.
+* **Cross-platform wheels + pure-Python sdists** (`pip.parse(platforms = [...])`)
+  — when the consumer opts into multi-platform mode:
+  - Packages with platform-divergent native wheels fan out into
+    per-platform repos behind a selector that
+    `alias`-`select()`s on `@platforms//os` + `@platforms//cpu`.
+  - Pure-Python wheels stay single-repo.
+  - **Pure-Python sdists** (v0.6) install once on the host with a
+    native-extension check; pure-Python results become a single
+    repo serving every target platform. Sdists that build native
+    code still fail loudly (cross-arch reuse of a host-built
+    `.so`/`.dylib`/`.pyd` is unsafe).
+  - Git + path sources remain host-only and fail loudly under a
+    cross-platform build.
 * End-to-end smoke tests:
   - `examples/smoke/` — host-only build with all five lockfile-feature
     paths: pure wheel, native wheel, sdist install, `certifi[bundle]`
@@ -63,11 +69,11 @@ What ships:
   - `examples/multiplatform/` — multi-platform lockfile + py_test
     that resolves a native wheel through the per-platform selector.
 
-Deferred to v0.6 (see [`docs/ROADMAP.md`](docs/ROADMAP.md)):
+Deferred to v0.7+ (see [`docs/ROADMAP.md`](docs/ROADMAP.md)):
 
 * Migration to rules_python's `uv_toolchain` once it leaves
   experimental.
-* Sdist install in multi-platform mode (currently host-only).
+* Native-extension sdists in multi-platform mode (cross-compile).
 * musl + Windows platform tag tables in `pip/private/platform.bzl`.
 
 ## Architecture

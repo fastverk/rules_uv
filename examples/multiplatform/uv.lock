@@ -9,6 +9,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "idna" },
     { name = "markupsafe" },
+    { name = "six" },
 ]
 
 # Pure-python wheel (`py3-none-any`). select_artifacts_per_platform
@@ -37,3 +38,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/e0/25/dd5c0f6ac1311e9b40f4af06c78efde0f3b5cbf02502f8ef9501294c425b/MarkupSafe-3.0.2-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:1c99d261bd2d5f6b59325c92c73df481e05e57f19837bdca8413b9eac4bd8028" },
     { url = "https://files.pythonhosted.org/packages/f3/f0/89e7aadfb3749d0f52234a0c8c7867877876e0a20b60e2188e9850794c17/MarkupSafe-3.0.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:e17c96c14e19278594aa4841ec148115f9c7615a47382ecb6b82bd8fea3ab0c8" },
 ]
+
+# Pure-python sdist-only package — `six` 1.4.1 predates the
+# widespread wheel ecosystem and never published a wheel artifact.
+# v0.6 exercises the new sdist-in-multi-platform path: host install
+# with `forbid_native_extensions=True`, single repo serving every
+# target platform (no selector, since pure-Python sdists are
+# platform-agnostic).
+[[package]]
+name = "six"
+version = "1.4.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/4e/aa/73683ca0c4237891e33562e3f55bcaab972869959b97b397637519d92035/six-1.4.1.tar.gz", hash = "sha256:f045afd6dffb755cc0411acb7ce9acc4de0e71261d4b5f91de2e68d9aa5f8367" }
