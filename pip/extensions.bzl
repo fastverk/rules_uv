@@ -69,7 +69,9 @@ def _filter_deps(deps, env, name):
     out = []
     seen = {}
     for d in deps:
-        if d.get("extra"):
+        # Edges that request extras (shim emits them under `extras`) are
+        # wired separately to the dep's per-extra target, not here.
+        if d.get("extras"):
             continue
         if not eval_marker(d.get("marker", ""), env):
             continue
@@ -83,42 +85,33 @@ def _filter_deps(deps, env, name):
     return out
 
 def _extras_dep_sets(pkg, env):
-    """For each extra defined on `pkg`, build the filtered dep list.
+    """For each extra of `pkg` (its `optional_dependencies` table),
+    return the filtered list of member specs.
 
-    Each entry: `(extra_name, [base_dep_pkg_name, ...])`.
-
-    Pulls from:
-      * `pkg.optional_dependencies` (the package's own extras
-        table, lifted from `[package.metadata]`).
-      * `pkg.dependencies` entries that carry `extra = "..."`
-        (gated edges).
+    Each entry: `(extra_name, [(member_name, [member_extras]), ...])`.
+    Member extras are preserved so a *nested* extra (an extra whose
+    member is `foo[bar]`) wires to `foo`'s per-extra target rather
+    than just its base `:pkg`.
     """
+    self_name = _normalize(pkg.get("name", ""))
     out = {}
-
-    # 1. Edges with explicit `extra = "..."` on the dependency
-    # itself (uv records these on the dependent package's side).
-    for d in pkg.get("dependencies", []):
-        extra = d.get("extra") or ""
-        if not extra:
-            continue
-        if not eval_marker(d.get("marker", ""), env):
-            continue
-        out.setdefault(extra, [])
-        out[extra].append(d.get("name", ""))
-
-    # 2. `optional-dependencies` table — the dependent package's
-    # canonical extras → dep-name list.
-    for extra, names in pkg.get("optional_dependencies", {}).items():
-        out.setdefault(extra, [])
-        for n in names:
-            if n not in out[extra] and n != pkg.get("name"):
-                out[extra].append(n)
-
-    # Normalize: stable ordering, deduplicate.
-    sorted_out = {}
-    for extra in sorted(out.keys()):
-        sorted_out[extra] = sorted({n: True for n in out[extra]}.keys())
-    return sorted_out
+    for extra in sorted(pkg.get("optional_dependencies", {}).keys()):
+        members = pkg["optional_dependencies"][extra]
+        specs = []
+        seen = {}
+        for m in members:
+            if not eval_marker(m.get("marker", ""), env):
+                continue
+            mn = m.get("name", "")
+            if not mn or _normalize(mn) == self_name:
+                continue
+            key = mn + "[" + ",".join(m.get("extras", [])) + "]"
+            if key in seen:
+                continue
+            seen[key] = True
+            specs.append((mn, m.get("extras", [])))
+        out[extra] = specs
+    return out
 
 def _make_pkg_repo(hub_name, pkg, build_tpl, host, python_version,
                    python_strategy, uv_label, target_platforms):
@@ -148,10 +141,33 @@ def _make_pkg_repo(hub_name, pkg, build_tpl, host, python_version,
     unconditional_deps = _filter_deps(pkg.get("dependencies", []), env, pkg["name"])
     dep_labels = [_dep_label(hub_name, d) for d in unconditional_deps]
 
+    # Dependency edges that request extras (e.g. `fastmcp-slim[client,server]`)
+    # are dropped by _filter_deps. The dep's per-extra target layers the extra
+    # members and re-exports `:pkg`, so wire the consumer directly to it —
+    # otherwise the extra's deps (e.g. uncalled-for) are reachable/materialized
+    # but never end up in the runfiles.
+    for d in pkg.get("dependencies", []):
+        req_extras = d.get("extras") or []
+        if not req_extras:
+            continue
+        if not eval_marker(d.get("marker", ""), env):
+            continue
+        if _normalize(d.get("name", "")) == _normalize(pkg["name"]):
+            continue
+        for label in _member_labels(hub_name, d.get("name", ""), req_extras):
+            if label not in dep_labels:
+                dep_labels.append(label)
+
+    # Per-extra targets. Each member may itself request extras (nested),
+    # in which case it wires to the member's per-extra target.
     extras = _extras_dep_sets(pkg, env)
     extra_target_blocks = []
-    for extra, dep_names in extras.items():
-        labels = [_dep_label(hub_name, d) for d in dep_names]
+    for extra, member_specs in extras.items():
+        labels = []
+        for mn, mex in member_specs:
+            for label in _member_labels(hub_name, mn, mex):
+                if label not in labels:
+                    labels.append(label)
         extra_target_blocks.append(_render_extra_target(extra, labels))
     extra_targets_str = "\n".join(extra_target_blocks)
 
@@ -535,10 +551,18 @@ _selector_repo = repository_rule(
 def _read_lock(mctx, lock_label):
     lock_path = mctx.path(lock_label)
     script = mctx.path(Label("//pip/private:uvlock_to_json.py"))
-    python = mctx.which("python3") or mctx.which("python")
+
+    # The shim uses stdlib tomllib, which needs Python 3.11+. A bare
+    # `python3` is frequently the system interpreter (3.9 on macOS), so
+    # prefer a versioned one and fall back to the generic names.
+    python = None
+    for name in ["python3.13", "python3.12", "python3.11", "python3", "python"]:
+        python = mctx.which(name)
+        if python:
+            break
     if not python:
         fail("rules_uv/pip: no python3 on PATH — needed to parse uv.lock " +
-             "(uses Python's stdlib tomllib).")
+             "(uses Python's stdlib tomllib, so 3.11+).")
     result = mctx.execute([python, script, lock_path], quiet = True)
     if result.return_code != 0:
         fail("rules_uv/pip: uvlock_to_json failed: " + result.stderr)
@@ -573,7 +597,12 @@ def _reachable_packages(lock, env):
                 n = d.get("name", "")
                 if n:
                     stack.append(n)
-    for _ in range(len(by_name) * 2 + 100):  # Starlark needs an explicit bound.
+    # Starlark loops need an explicit upper bound. Each iteration
+    # pops one name; the same name can land on the stack multiple
+    # times via different edges before it's visited, so be
+    # generous (20x average in-degree per package + a constant
+    # handles everything we've seen in real lockfiles).
+    for _ in range(len(by_name) * 20 + 1000):
         if not stack:
             break
         name = stack.pop()
@@ -589,8 +618,11 @@ def _reachable_packages(lock, env):
                 stack.append(n)
         for members in (pkg.get("optional_dependencies") or {}).values():
             for m in members:
-                if m not in visited:
-                    stack.append(m)
+                # Members are specs ({name, extras, marker}); the member's
+                # own extras resolve transitively once it's visited.
+                mn = m.get("name", "")
+                if mn and mn not in visited:
+                    stack.append(mn)
     return visited
 
 def _package_in_scope(pkg, env):
@@ -761,6 +793,17 @@ def _resolve_platforms(tag_platforms, host):
 
 def _dep_label(hub_name, pkg_name):
     return "@{}__{}//:pkg".format(hub_name, _normalize(pkg_name))
+
+def _member_labels(hub_name, pkg_name, extras):
+    """Labels for depending on `pkg_name[extras]`.
+
+    With extras → the dep's per-extra target(s) (each re-exports `:pkg`
+    and layers that extra's members). Without → the base `:pkg`.
+    """
+    norm = _normalize(pkg_name)
+    if extras:
+        return ["@{}__{}//:{}".format(hub_name, norm, ex) for ex in extras]
+    return ["@{}__{}//:pkg".format(hub_name, norm)]
 
 def _labels_str(labels):
     return ", ".join(['"{}"'.format(l) for l in labels])

@@ -4,6 +4,23 @@ All notable changes to rules_uv. The format is loosely
 [Keep a Changelog](https://keepachangelog.com/) — version headers
 mirror the published bazel-registry entries.
 
+## 0.7.4 — extras wiring + nested extras + 3.11 shim
+
+Three fixes to `pip.parse`'s extras handling, surfaced wiring deep
+pypi tools (e.g. `awslabs.aws-api-mcp-server`) hermetically:
+
+- **Lock shim interpreter**: prefer a versioned `python3.13/3.12/3.11`
+  for the `uv.lock` → JSON step. A bare `python3` is frequently the
+  system 3.9 on macOS, which lacks stdlib `tomllib`.
+- **Extras-edge key**: the shim projects requested extras under
+  `extras` (a list), but the extension read `extra` — so `pkg[extra]`
+  dependency edges were silently never wired to the dep's per-extra
+  target. A consumer of `foo[bar]` now depends on `@hub__foo//:bar`.
+- **Nested extras**: the shim preserves each extra member's own
+  extras, and per-extra targets wire them recursively through the
+  target graph — e.g. `fastmcp-slim[client,server]` →
+  `py-key-value-aio[filetree,keyring,memory]` → `cachetools`.
+
 ## 0.7.3 — uv resolution-markers
 
 uv's resolver can emit multiple `[[package]]` entries with the

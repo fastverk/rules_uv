@@ -125,15 +125,28 @@ def _dep(raw: dict) -> dict:
 def _extras(pkg: dict) -> dict:
     """`optional-dependencies` is a TOML table keyed by extra name.
 
-    Each value is a list of dependency tables. We collapse to a
-    `{extra: [pkg_name, ...]}` mapping; per-edge markers/extras
-    inside an extra are dropped for v0.4 (revisit when a real
-    consumer needs nested marker semantics).
+    Each value is a list of dependency tables. We keep each member's
+    own requested extras (and marker) so the extension can wire
+    *nested* extras — an extra whose member is itself `foo[bar]`
+    (e.g. fastmcp-slim's `client` pulls `py-key-value-aio[keyring]`).
+    Shape: `{extra: [{"name", "extras", "marker"}, ...]}`.
     """
     opt = pkg.get("optional-dependencies") or {}
     out = {}
     for name, deps in opt.items():
-        out[name] = [d.get("name", "") for d in deps if isinstance(d, dict)]
+        members = []
+        for d in deps:
+            if not isinstance(d, dict):
+                continue
+            ex = d.get("extra") or []
+            if isinstance(ex, str):
+                ex = [ex] if ex else []
+            members.append({
+                "name": d.get("name", ""),
+                "extras": list(ex),
+                "marker": d.get("marker", ""),
+            })
+        out[name] = members
     return out
 
 
