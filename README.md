@@ -121,7 +121,7 @@ Deferred to v0.7+ (see [`docs/ROADMAP.md`](docs/ROADMAP.md)):
 `.bazelrc`:
 
 ```
-common --registry=https://raw.githubusercontent.com/fastverk/bazel-registry/main/
+common --registry=https://registry.fastverk.com/
 common --registry=https://bcr.bazel.build/
 ```
 
